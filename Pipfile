@@ -1,0 +1,25 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+ultralytics = "8.4.22"
+tensorflow = "2.19.0"
+tf_keras = "2.19.0"
+sng4onnx = "2.0.1"
+ai-edge-litert = "2.1.2"
+onnx = "1.20.1"
+onnx2tf = "1.28.8"
+onnxruntime-gpu = "1.24.4"
+onnxslim = "0.1.88"
+onnx_graphsurgeon = "0.5.8"
+tensorrt = "10.15.1.29"
+pyyaml = "6.0.3"
+protobuf = "5.29.6"
+
+[dev-packages]
+
+[requires]
+python_version = "3.12"
+python_full_version = "3.12.3"

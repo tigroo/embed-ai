@@ -1,0 +1,15 @@
+"""Shared constants, logger, and utility functions used across all modules."""
+
+import logging
+from pathlib import Path
+
+logger = logging.getLogger("yolo_bench")
+
+# TFLite models are compiled with fixed 640x640 input.
+TFLITE_IMG_SIZE = 640
+
+
+def file_size_mb(path: Path) -> float | None:
+    """Return file size in MB, or None if the file does not exist."""
+    return round(path.stat().st_size / 1_048_576, 2) if path.exists() else None
+
