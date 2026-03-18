@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0f0f23" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>YOLO v26 — Live Detect</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #000;
+      color: #e0e0e0;
+      overflow: hidden;
+      height: 100dvh;
+      width: 100dvw;
+      display: flex;
+      flex-direction: column;
+      touch-action: none;
+    }
+
+    /* ── Full-screen camera viewport ───────── */
+    .viewport {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: #000;
+    }
+    .viewport video,
+    .viewport canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+    }
+
+    /* ── Status overlay (center) ───────────── */
+    #status {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 1.2rem;
+      color: #48F90A;
+      text-align: center;
+      pointer-events: none;
+      text-shadow: 0 0 8px rgba(0,0,0,.9);
+      z-index: 20;
+    }
+
+    /* ── HUD overlay (top-left) ────────────── */
+    #hud {
+      position: absolute;
+      top: env(safe-area-inset-top, 8px);
+      left: 8px;
+      z-index: 10;
+      background: rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.78rem;
+      line-height: 1.55;
+      font-variant-numeric: tabular-nums;
+      pointer-events: none;
+      color: #ccc;
+      min-width: 155px;
+    }
+    #hud .val { color: #48F90A; font-weight: 700; }
+    #hud .label { color: #888; }
+    #hud .row { display: flex; justify-content: space-between; gap: 8px; }
+
+    /* ── Controls bar (bottom) ─────────────── */
+    .controls {
+      background: rgba(15, 15, 35, 0.92);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      padding: 10px 14px;
+      padding-bottom: max(10px, env(safe-area-inset-bottom));
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      border-top: 1px solid #333;
+      z-index: 10;
+    }
+    .controls label {
+      font-size: 0.78rem;
+      color: #aaa;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .controls select,
+    .controls input[type=range] {
+      accent-color: #48F90A;
+    }
+    .controls select {
+      background: #16213e;
+      color: #e0e0e0;
+      border: 1px solid #444;
+      border-radius: 4px;
+      padding: 5px 8px;
+      font-size: 0.82rem;
+    }
+    .controls input[type=range] {
+      width: 80px;
+    }
+    #install-btn {
+      display: none;
+      background: #48F90A;
+      color: #0f0f23;
+      border: none;
+      border-radius: 4px;
+      padding: 6px 14px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-left: auto;
+      font-size: 0.82rem;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="viewport">
+    <video id="camera" playsinline muted></video>
+    <canvas id="overlay"></canvas>
+
+    <div id="hud">
+      <div class="row"><span class="label">FPS</span>        <span class="val" id="h-fps">--</span></div>
+      <div class="row"><span class="label">Inference</span>   <span class="val" id="h-inf">-- ms</span></div>
+      <div class="row"><span class="label">Objects</span>     <span class="val" id="h-obj">0</span></div>
+      <div class="row"><span class="label">Model</span>       <span class="val" id="h-model">--</span></div>
+      <div class="row"><span class="label">Size</span>        <span class="val" id="h-size">--</span></div>
+      <div class="row"><span class="label">Backend</span>     <span class="val" id="h-back">--</span></div>
+    </div>
+
+    <div id="status">Initializing&hellip;</div>
+  </div>
+
+  <div class="controls">
+    <label>Model
+      <select id="model-select">
+        <option value="fp32">FP32 &mdash; ~10 MB</option>
+        <option value="int8" selected>INT8 &mdash; ~3 MB</option>
+      </select>
+    </label>
+
+    <label>Conf
+      <input id="conf-slider" type="range" min="0.10" max="0.90" step="0.05" value="0.35" />
+      <span id="conf-value">0.35</span>
+    </label>
+
+    <button id="install-btn">Install</button>
+  </div>
+
+  <!-- ONNX Runtime Web (CDN) — includes WebGPU + WebGL + WASM backends -->
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/ort.all.min.js"></script>
+  <script>
+    ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/";
+  </script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
+
