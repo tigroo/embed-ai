@@ -6,14 +6,8 @@
  *   2. WebGL
  *   3. WASM
  *
- * We try each backend by actually creating a session; if the backend
- * rejects the model (missing op, GPU init failure…) we fall through.
- *
- * IMPORTANT — tensor lifecycle:
- *   Every ort.Tensor holds a chunk of WASM linear memory that is NOT
- *   reached by the JS garbage collector.  We MUST call .dispose() on
- *   input tensors and output tensors after each inference, otherwise
- *   the WASM heap grows until the OS kills the tab (especially iOS).
+ * Tensor lifecycle: every ort.Tensor wraps WASM/GPU memory outside the
+ * JS GC.  We must call .dispose() on every tensor after use.
  */
 
 const INPUT_SIZE = 640;
@@ -22,7 +16,11 @@ let session = null;
 let currentModel = null;
 let activeBackend = "unknown";
 
-// Pre-allocated buffer reused every frame (avoids ~5 MB alloc per frame).
+/** True on iOS / iPadOS (all browsers there are WebKit). */
+export const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent)
+  || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+// Pre-allocated buffer reused every frame.
 const _inputBuf = new Float32Array(3 * INPUT_SIZE * INPUT_SIZE);
 
 const MODEL_META = {
@@ -31,40 +29,28 @@ const MODEL_META = {
 };
 
 /**
- * Ordered list of backends to try.
- * @param {"fp32"|"int8"} variant
+ * Ordered backends — WebGL first (mature & stable on all platforms
+ * including iOS), then WebGPU (newer, still buggy on iOS WebKit),
+ * then WASM as ultimate fallback.
  */
-function candidateProviders(variant) {
+function candidateProviders() {
   const list = [];
-
-  if (typeof navigator !== "undefined" && navigator.gpu) {
-    list.push("webgpu");
-  }
-
   try {
     const c = document.createElement("canvas");
-    if (c.getContext("webgl2") || c.getContext("webgl")) {
-      list.push("webgl");
-    }
+    if (c.getContext("webgl2") || c.getContext("webgl")) list.push("webgl");
   } catch { /* no WebGL */ }
-
+  if (typeof navigator !== "undefined" && navigator.gpu) list.push("webgpu");
   list.push("wasm");
   return list;
 }
 
-/**
- * Safely dispose an ort.Tensor (no-op if null / already released).
- */
 function disposeTensor(t) {
-  try { if (t && typeof t.dispose === "function") t.dispose(); } catch { /* ignore */ }
+  try { if (t && typeof t.dispose === "function") t.dispose(); } catch { /* ok */ }
 }
 
 /**
  * Load (or switch) the ONNX model.
- * Tries backends in order; first successful session wins.
- *
  * @param {"fp32"|"int8"} variant
- * @returns {Promise<{backend: string, size: string, label: string}>}
  */
 export async function loadModel(variant) {
   const meta = MODEL_META[variant] ?? MODEL_META.fp32;
@@ -73,62 +59,49 @@ export async function loadModel(variant) {
     return { backend: activeBackend, size: meta.size, label: meta.label };
   }
 
-  // Dispose previous session
   if (session) {
     try { await session.release(); } catch { /* ignore */ }
     session = null;
   }
 
-  const candidates = candidateProviders(variant);
-  if (!candidates.length) {
-    throw new Error(`No compatible backend for ${meta.label} on this device`);
-  }
+  const candidates = candidateProviders();
   console.log(`Loading ${meta.label} (${meta.path}), trying: [${candidates}] …`);
 
   for (const provider of candidates) {
     try {
-      const opts = {
+      const s = await ort.InferenceSession.create(meta.path, {
         executionProviders: [provider],
         graphOptimizationLevel: "all",
-      };
-      const s = await ort.InferenceSession.create(meta.path, opts);
+      });
 
-      // Preflight: run one dummy inference to catch backends that load
-      // the graph but crash on unsupported ops during execution.
-      const dummy = new ort.Tensor(
-        "float32",
+      // Preflight — validate that the backend can actually execute the graph
+      const dummy = new ort.Tensor("float32",
         new Float32Array(3 * INPUT_SIZE * INPUT_SIZE),
-        [1, 3, INPUT_SIZE, INPUT_SIZE],
-      );
-      let preflight = null;
-      try {
-        preflight = await s.run({ images: dummy });
-      } finally {
+        [1, 3, INPUT_SIZE, INPUT_SIZE]);
+      let out = null;
+      try { out = await s.run({ images: dummy }); }
+      finally {
         disposeTensor(dummy);
-        if (preflight) {
-          for (const k of Object.keys(preflight)) disposeTensor(preflight[k]);
-        }
+        if (out) for (const k of Object.keys(out)) disposeTensor(out[k]);
       }
 
       session = s;
       currentModel = variant;
       activeBackend = provider;
-      console.log(`✔ ${meta.label} loaded + verified on ${provider}`);
+      console.log(`✔ ${meta.label} ready on ${provider}`);
       return { backend: activeBackend, size: meta.size, label: meta.label };
     } catch (err) {
-      console.warn(`✘ ${provider} failed for ${meta.label}: ${err.message}`);
+      console.warn(`✘ ${provider} failed: ${err.message}`);
     }
   }
 
   throw new Error(`No backend could load ${meta.label}`);
 }
 
-
 /**
- * Run detection on a video element.
+ * Run detection on a video frame.
  * @param {HTMLVideoElement} video
  * @param {number} confThreshold
- * @returns {Promise<{dets: Array, inferMs: number}>}
  */
 export async function detect(video, confThreshold = 0.35) {
   if (!session) throw new Error("Model not loaded");
@@ -137,23 +110,21 @@ export async function detect(video, confThreshold = 0.35) {
   const vh = video.videoHeight;
   if (!vw || !vh) return { dets: [], inferMs: 0 };
 
-  // Pre-process: resize to 640×640 and convert RGBA HWC uint8 → RGB CHW float32 [0,1]
   const canvas = getOffscreenCanvas();
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(video, 0, 0, INPUT_SIZE, INPUT_SIZE);
-  const { data } = ctx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE);
+  const ctx2d = canvas.getContext("2d", { willReadFrequently: true });
+  ctx2d.drawImage(video, 0, 0, INPUT_SIZE, INPUT_SIZE);
+  const rgba = ctx2d.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE).data;
 
-  const float32 = _inputBuf;          // reuse pre-allocated buffer
+  const f = _inputBuf;
   const plane = INPUT_SIZE * INPUT_SIZE;
   for (let i = 0; i < plane; i++) {
     const j = i * 4;
-    float32[i]             = data[j]     / 255;  // R
-    float32[i + plane]     = data[j + 1] / 255;  // G
-    float32[i + 2 * plane] = data[j + 2] / 255;  // B
+    f[i]             = rgba[j]     / 255;
+    f[i + plane]     = rgba[j + 1] / 255;
+    f[i + 2 * plane] = rgba[j + 2] / 255;
   }
 
-  const tensor = new ort.Tensor("float32", float32, [1, 3, INPUT_SIZE, INPUT_SIZE]);
-
+  const tensor = new ort.Tensor("float32", f, [1, 3, INPUT_SIZE, INPUT_SIZE]);
   let results = null;
   let inferMs = 0;
   try {
@@ -164,11 +135,9 @@ export async function detect(video, confThreshold = 0.35) {
     disposeTensor(tensor);
   }
 
-  // Output shape: [1, 300, 6] → [x1, y1, x2, y2, conf, classId]
   const output = results[Object.keys(results)[0]];
   const raw = output.data;
-  const numDet = output.dims[1]; // 300
-
+  const numDet = output.dims[1];
   const sx = vw / INPUT_SIZE;
   const sy = vh / INPUT_SIZE;
 
@@ -178,28 +147,18 @@ export async function detect(video, confThreshold = 0.35) {
     const conf = raw[off + 4];
     if (conf < confThreshold) continue;
     dets.push({
-      x1:  raw[off]     * sx,
-      y1:  raw[off + 1] * sy,
-      x2:  raw[off + 2] * sx,
-      y2:  raw[off + 3] * sy,
-      conf,
-      cls: Math.round(raw[off + 5]),
+      x1: raw[off] * sx, y1: raw[off + 1] * sy,
+      x2: raw[off + 2] * sx, y2: raw[off + 3] * sy,
+      conf, cls: Math.round(raw[off + 5]),
     });
   }
 
-  // Dispose ALL output tensors to free WASM memory
   for (const k of Object.keys(results)) disposeTensor(results[k]);
-
   return { dets, inferMs };
 }
 
-// ── Reusable offscreen canvas ───────────────────────────────────────────────
 let _osc = null;
 function getOffscreenCanvas() {
-  if (!_osc) {
-    _osc = document.createElement("canvas");
-    _osc.width = INPUT_SIZE;
-    _osc.height = INPUT_SIZE;
-  }
+  if (!_osc) { _osc = document.createElement("canvas"); _osc.width = _osc.height = INPUT_SIZE; }
   return _osc;
 }
