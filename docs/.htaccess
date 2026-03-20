@@ -1,0 +1,23 @@
+# Enable CORS for camera access
+Header set Access-Control-Allow-Origin "*"
+Header set Access-Control-Allow-Methods "GET, POST, OPTIONS"
+Header set Access-Control-Allow-Headers "Content-Type"
+
+# Permissions policy for camera
+Header set Permissions-Policy "camera=*"
+
+# Required for PWA
+<Files "manifest.json">
+  Header set Content-Type "application/manifest+json"
+</Files>
+
+# Cache control
+<FilesMatch "\.(js|css)$">
+  Header set Cache-Control "max-age=3600"
+</FilesMatch>
+
+<Files "*.onnx">
+  Header set Cache-Control "max-age=86400"
+  Header set Content-Type "application/octet-stream"
+</Files>
+

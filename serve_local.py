@@ -62,6 +62,13 @@ class LoggingHandler(http.server.SimpleHTTPRequestHandler):
         # Allow WASM streaming compilation and cross-origin isolation
         self.send_header("Cross-Origin-Opener-Policy", "same-origin")
         self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
+
+        # Camera permissions
+        self.send_header("Permissions-Policy", "camera=*")
+
+        # Dev server: never cache — avoids stale JS/WASM/model issues
+        self.send_header("Cache-Control", "no-store")
+
         super().end_headers()
 
     def log_message(self, fmt, *args):

@@ -23,20 +23,31 @@ const hBack  = document.getElementById("h-back");
 
 let running = false;
 let confThreshold = 0.35;
+let loopBusy = false;          // prevent overlapping inferences
+let consecutiveErrors = 0;     // track silent failures
+const MAX_CONSECUTIVE_ERR = 5; // stop loop after N consecutive errors
 
 // Smoothed FPS (exponential moving average)
 let smoothFps = 0;
 const FPS_ALPHA = 0.15;
 
+// Minimum gap (ms) between inference starts — lets the GC breathe on mobile.
+// 50 ms ≈ 18 FPS cap; keeps iOS WebKit stable.
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+const MIN_FRAME_GAP_MS = isMobile ? 80 : 30;
+
 // ── Camera ──────────────────────────────────────────────────────────────────
 
 async function startCamera() {
   statusEl.textContent = "Starting camera\u2026";
+  // Lower resolution on mobile: reduces getImageData() cost and memory pressure.
+  const camW = isMobile ? 640 : 1280;
+  const camH = isMobile ? 480 : 720;
   const stream = await navigator.mediaDevices.getUserMedia({
     video: {
       facingMode: "environment",
-      width:  { ideal: 1280 },
-      height: { ideal: 720 },
+      width:  { ideal: camW },
+      height: { ideal: camH },
     },
     audio: false,
   });
@@ -49,25 +60,60 @@ async function startCamera() {
 
 // ── Render loop ─────────────────────────────────────────────────────────────
 
+function scheduleNext() {
+  if (!running) return;
+  // Use setTimeout to guarantee a minimum gap so the browser / GC can
+  // reclaim memory between frames (critical for iOS WASM).
+  setTimeout(() => requestAnimationFrame(loop), MIN_FRAME_GAP_MS);
+}
+
 async function loop() {
   if (!running) return;
+  if (loopBusy) { scheduleNext(); return; }   // skip if previous frame still running
+  loopBusy = true;
+
   const t0 = performance.now();
 
-  const { dets, inferMs } = await detect(video, confThreshold);
-  drawDetections(dets);
+  try {
+    // Guard: if video track ended (e.g. iOS revoked camera), stop gracefully
+    if (video.srcObject) {
+      const tracks = video.srcObject.getVideoTracks();
+      if (!tracks.length || tracks[0].readyState === "ended") {
+        console.warn("Camera track ended — pausing loop");
+        running = false;
+        loopBusy = false;
+        statusEl.textContent = "Camera lost — tap Model selector to restart";
+        return;
+      }
+    }
 
-  const totalMs = performance.now() - t0;
-  const instantFps = 1000 / totalMs;
-  smoothFps = smoothFps === 0
-    ? instantFps
-    : smoothFps * (1 - FPS_ALPHA) + instantFps * FPS_ALPHA;
+    const { dets, inferMs } = await detect(video, confThreshold);
+    drawDetections(dets);
 
-  // Update HUD
-  hFps.textContent = smoothFps.toFixed(1);
-  hInf.textContent = inferMs.toFixed(0) + " ms";
-  hObj.textContent = dets.length;
+    const totalMs = performance.now() - t0;
+    const instantFps = 1000 / totalMs;
+    smoothFps = smoothFps === 0
+      ? instantFps
+      : smoothFps * (1 - FPS_ALPHA) + instantFps * FPS_ALPHA;
 
-  requestAnimationFrame(loop);
+    // Update HUD
+    hFps.textContent = smoothFps.toFixed(1);
+    hInf.textContent = inferMs.toFixed(0) + " ms";
+    hObj.textContent = dets.length;
+    consecutiveErrors = 0;
+  } catch (err) {
+    console.error("Loop error:", err);
+    consecutiveErrors++;
+    if (consecutiveErrors >= MAX_CONSECUTIVE_ERR) {
+      running = false;
+      statusEl.textContent = `Stopped (${err.message}). Switch model to retry.`;
+      loopBusy = false;
+      return;
+    }
+  }
+
+  loopBusy = false;
+  scheduleNext();
 }
 
 function drawDetections(dets) {
@@ -111,13 +157,25 @@ function updateHudModel(info) {
 
 modelSel.addEventListener("change", async () => {
   running = false;
+  loopBusy = false;
   smoothFps = 0;
+  consecutiveErrors = 0;
   statusEl.textContent = "Loading model\u2026";
-  const info = await loadModel(modelSel.value);
-  updateHudModel(info);
-  statusEl.textContent = "";
-  running = true;
-  requestAnimationFrame(loop);
+  try {
+    // Re-check camera is still alive; restart if needed
+    if (!video.srcObject || !video.srcObject.getVideoTracks().length
+        || video.srcObject.getVideoTracks()[0].readyState === "ended") {
+      await startCamera();
+    }
+    const info = await loadModel(modelSel.value);
+    updateHudModel(info);
+    statusEl.textContent = "";
+    running = true;
+    scheduleNext();
+  } catch (err) {
+    statusEl.textContent = `Error: ${err.message}`;
+    console.error("Model switch error:", err);
+  }
 });
 
 confIn.addEventListener("input", () => {
@@ -135,7 +193,7 @@ async function init() {
     updateHudModel(info);
     statusEl.textContent = "";
     running = true;
-    requestAnimationFrame(loop);
+    scheduleNext();
   } catch (err) {
     statusEl.textContent = `Error: ${err.message}`;
     console.error(err);

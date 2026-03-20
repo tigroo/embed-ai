@@ -2,14 +2,18 @@
  * YOLO v26 detector — ONNX Runtime Web.
  *
  * Backend negotiation (fastest → safest):
- *   1. WebGPU  — Safari 18+ (iPhone), Chrome 113+, Edge 113+
- *   2. WASM    — universal fallback (all browsers)
- *
- * WebGL is skipped: it doesn't support the Split operator used
- * throughout YOLO v26 at any opset.
+ *   1. WebGPU  (if available)
+ *   2. WebGL
+ *   3. WASM
  *
  * We try each backend by actually creating a session; if the backend
  * rejects the model (missing op, GPU init failure…) we fall through.
+ *
+ * IMPORTANT — tensor lifecycle:
+ *   Every ort.Tensor holds a chunk of WASM linear memory that is NOT
+ *   reached by the JS garbage collector.  We MUST call .dispose() on
+ *   input tensors and output tensors after each inference, otherwise
+ *   the WASM heap grows until the OS kills the tab (especially iOS).
  */
 
 const INPUT_SIZE = 640;
@@ -18,6 +22,9 @@ let session = null;
 let currentModel = null;
 let activeBackend = "unknown";
 
+// Pre-allocated buffer reused every frame (avoids ~5 MB alloc per frame).
+const _inputBuf = new Float32Array(3 * INPUT_SIZE * INPUT_SIZE);
+
 const MODEL_META = {
   fp32: { path: "models/yolo26n_fp32.onnx", size: "~10 MB", label: "FP32" },
   int8: { path: "models/yolo26n_int8.onnx",  size: "~3 MB",  label: "INT8" },
@@ -25,15 +32,31 @@ const MODEL_META = {
 
 /**
  * Ordered list of backends to try.
- * WebGPU is only attempted when the API is present (secure context + modern browser).
+ * @param {"fp32"|"int8"} variant
  */
-function candidateProviders() {
+function candidateProviders(variant) {
   const list = [];
+
   if (typeof navigator !== "undefined" && navigator.gpu) {
     list.push("webgpu");
   }
-  list.push("wasm"); // always available
+
+  try {
+    const c = document.createElement("canvas");
+    if (c.getContext("webgl2") || c.getContext("webgl")) {
+      list.push("webgl");
+    }
+  } catch { /* no WebGL */ }
+
+  list.push("wasm");
   return list;
+}
+
+/**
+ * Safely dispose an ort.Tensor (no-op if null / already released).
+ */
+function disposeTensor(t) {
+  try { if (t && typeof t.dispose === "function") t.dispose(); } catch { /* ignore */ }
 }
 
 /**
@@ -56,7 +79,10 @@ export async function loadModel(variant) {
     session = null;
   }
 
-  const candidates = candidateProviders();
+  const candidates = candidateProviders(variant);
+  if (!candidates.length) {
+    throw new Error(`No compatible backend for ${meta.label} on this device`);
+  }
   console.log(`Loading ${meta.label} (${meta.path}), trying: [${candidates}] …`);
 
   for (const provider of candidates) {
@@ -66,10 +92,28 @@ export async function loadModel(variant) {
         graphOptimizationLevel: "all",
       };
       const s = await ort.InferenceSession.create(meta.path, opts);
+
+      // Preflight: run one dummy inference to catch backends that load
+      // the graph but crash on unsupported ops during execution.
+      const dummy = new ort.Tensor(
+        "float32",
+        new Float32Array(3 * INPUT_SIZE * INPUT_SIZE),
+        [1, 3, INPUT_SIZE, INPUT_SIZE],
+      );
+      let preflight = null;
+      try {
+        preflight = await s.run({ images: dummy });
+      } finally {
+        disposeTensor(dummy);
+        if (preflight) {
+          for (const k of Object.keys(preflight)) disposeTensor(preflight[k]);
+        }
+      }
+
       session = s;
       currentModel = variant;
       activeBackend = provider;
-      console.log(`✔ ${meta.label} loaded on ${provider}`);
+      console.log(`✔ ${meta.label} loaded + verified on ${provider}`);
       return { backend: activeBackend, size: meta.size, label: meta.label };
     } catch (err) {
       console.warn(`✘ ${provider} failed for ${meta.label}: ${err.message}`);
@@ -99,7 +143,7 @@ export async function detect(video, confThreshold = 0.35) {
   ctx.drawImage(video, 0, 0, INPUT_SIZE, INPUT_SIZE);
   const { data } = ctx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE);
 
-  const float32 = new Float32Array(3 * INPUT_SIZE * INPUT_SIZE);
+  const float32 = _inputBuf;          // reuse pre-allocated buffer
   const plane = INPUT_SIZE * INPUT_SIZE;
   for (let i = 0; i < plane; i++) {
     const j = i * 4;
@@ -110,9 +154,15 @@ export async function detect(video, confThreshold = 0.35) {
 
   const tensor = new ort.Tensor("float32", float32, [1, 3, INPUT_SIZE, INPUT_SIZE]);
 
-  const t0 = performance.now();
-  const results = await session.run({ images: tensor });
-  const inferMs = performance.now() - t0;
+  let results = null;
+  let inferMs = 0;
+  try {
+    const t0 = performance.now();
+    results = await session.run({ images: tensor });
+    inferMs = performance.now() - t0;
+  } finally {
+    disposeTensor(tensor);
+  }
 
   // Output shape: [1, 300, 6] → [x1, y1, x2, y2, conf, classId]
   const output = results[Object.keys(results)[0]];
@@ -136,6 +186,10 @@ export async function detect(video, confThreshold = 0.35) {
       cls: Math.round(raw[off + 5]),
     });
   }
+
+  // Dispose ALL output tensors to free WASM memory
+  for (const k of Object.keys(results)) disposeTensor(results[k]);
+
   return { dets, inferMs };
 }
 

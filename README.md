@@ -237,28 +237,6 @@ Videos are auto-discovered from `resources/*.mp4`.
 
 ---
 
-## 📁 Generated Artifacts
-
-```
-output/
-  yolo26n.pt                             PyTorch weights       (~5 MB)
-  yolo26n.onnx                           ONNX FP32 → PWA      (~10 MB)
-  yolo26n_int8.onnx                      ONNX mixed → PWA     (~3.5 MB)
-  yolo26n_float32.tflite                 TFLite FP32           (~10 MB)
-  yolo26n_float16.tflite                 TFLite FP16           (~5 MB)
-  yolo26n_int8.tflite                    TFLite int8 dynamic   (~3 MB) ✅
-  yolo26n_full_integer_quant.tflite      TFLite full int8      (~3 MB) ⚠
-  calibration_frames/                    ~1000 extracted frames
-  calibration_frames.yaml                Dataset YAML (nc: 80)
-  eval_cache.json                        mAP results cache
-  benchmark_cache.json                   FPS results cache
-  runs/<tag>/                            Ultralytics val outputs per model
-  *_predicted_*.mp4                      Annotated output videos (≤300 frames)
-  summary.json                           Consolidated results
-```
-
----
-
 ## 📱 PWA — Live Detection on Phone
 
 <p align="center">
