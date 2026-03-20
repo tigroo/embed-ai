@@ -167,7 +167,7 @@
     // Safe to keep permanently — it only deletes caches whose name < current.
     (async () => {
       if (!("caches" in window)) return;
-      const CURRENT = "yolo-detect-v12";
+      const CURRENT = "yolo-detect-v14";
       for (const k of await caches.keys()) {
         if (k !== CURRENT) { await caches.delete(k); console.log("purged cache:", k); }
       }

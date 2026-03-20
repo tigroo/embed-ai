@@ -59,6 +59,13 @@ const MIN_FRAME_GAP_MS = 30;
 // Track whether the model has been loaded at least once (for resume).
 let modelLoaded = false;
 
+// Anti-bounce: minimum interval between camera restarts (ms).
+// On iOS WebKit, too-frequent getUserMedia calls trigger a permission
+// re-prompt loop that effectively kills the page.
+const RESUME_COOLDOWN_MS = isIOS ? 3000 : 1000;
+let lastResumeTs = 0;
+let resumeTimer = null;
+
 // ── Camera ──────────────────────────────────────────────────────────────────
 
 async function startCamera() {
@@ -115,12 +122,11 @@ async function loop() {
 
   try {
     if (!cameraAlive()) {
-      // Camera died mid-loop — stop cleanly, the visibilitychange handler
-      // or user action will restart it.
+      // Camera died mid-loop — stop cleanly, schedule a debounced restart.
       loopBusy = false;
       running = false;
       statusEl.textContent = "Camera lost — resuming\u2026";
-      resumeAll();
+      scheduleResume();
       return;
     }
 
@@ -185,11 +191,28 @@ function pauseAll() {
   console.log("⏸ pause — releasing camera");
   running = false;
   loopBusy = false;
+  if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; }
   stopCamera();                   // FREE the hardware so iOS doesn't kill us
+}
+
+/**
+ * Schedule a debounced resume.  Prevents rapid getUserMedia() calls
+ * that trigger the iOS "allow camera?" prompt loop.
+ */
+function scheduleResume() {
+  if (resumeTimer) return;        // already scheduled
+  const elapsed = performance.now() - lastResumeTs;
+  const wait = Math.max(0, RESUME_COOLDOWN_MS - elapsed);
+  console.log(`⏳ scheduling resume in ${Math.round(wait)} ms`);
+  resumeTimer = setTimeout(() => {
+    resumeTimer = null;
+    resumeAll();
+  }, wait);
 }
 
 async function resumeAll() {
   console.log("▶ resume — restarting camera + loop");
+  lastResumeTs = performance.now();
   smoothFps = 0;
   consecutiveErrors = 0;
 
@@ -210,7 +233,7 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     pauseAll();
   } else {
-    resumeAll();
+    scheduleResume();
   }
 });
 
@@ -218,7 +241,7 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("pageshow", (e) => {
   if (e.persisted) {
     console.log("pageshow (bfcache restore)");
-    resumeAll();
+    scheduleResume();
   }
 });
 

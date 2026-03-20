@@ -1,4 +1,4 @@
-const CACHE_NAME = "yolo-detect-v12";
+const CACHE_NAME = "yolo-detect-v14";
 
 const PRECACHE = [
   "./",

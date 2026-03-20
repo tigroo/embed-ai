@@ -221,6 +221,13 @@ def _get_onnx_opset(onnx_path: Path) -> int:
     )
 
 
+def _get_onnx_ops(onnx_path: Path) -> set[str]:
+    """Return the set of operator types used in an ONNX model."""
+    import onnx as _onnx
+    m = _onnx.load(str(onnx_path))
+    return {n.op_type for n in m.graph.node}
+
+
 # Highest opset fully supported by ONNX Runtime Web's WebGL + WASM backends.
 # Split@18+ and several other ops are NOT implemented in the browser runtime.
 _WEB_ONNX_OPSET = 17
@@ -229,10 +236,14 @@ _WEB_ONNX_OPSET = 17
 def export_onnx_for_pwa(output_root: Path, model: str) -> tuple[Path, Path]:
     """Create web-compatible ONNX models directly in ``docs/pwa/models/``.
 
-    Ultralytics exports the ONNX intermediate at opset 20, but ONNX
-    Runtime Web (WebGL / WASM) doesn't support ``Split`` at that opset.
-    This function exports a fresh ONNX at opset ≤ 17, moves it straight
-    into the PWA directory, and quantizes the INT8 variant in-place.
+    Ultralytics end2end export includes TopK / GatherElements / Mod in the
+    detection head which are **not implemented** in ONNX Runtime Web's WebGL
+    backend.  We therefore export with ``end2end=False`` so the graph
+    contains only backbone + neck + head *convolutions*.  The output shape
+    becomes ``[1, 84, 8400]`` (4 bbox + 80 class scores per anchor) and
+    NMS is performed in JavaScript on the client.
+
+    The ONNX opset is capped at 17 (Split @18+ is also unsupported).
 
     Returns ``(pwa_fp32_path, pwa_int8_path)``.
     """
@@ -245,36 +256,53 @@ def export_onnx_for_pwa(output_root: Path, model: str) -> tuple[Path, Path]:
     pwa_fp32 = pwa_dir / f"{model}_fp32.onnx"
     pwa_int8 = pwa_dir / f"{model}_int8.onnx"
 
-    # ── Step 1: FP32 ONNX at web-compatible opset ────────────────────
+    # Ops that the WebGL backend of ORT-Web cannot execute.
+    _WEBGL_BLOCKLIST = {"GatherElements", "Mod", "TopK"}
+
+    # ── Step 1: FP32 ONNX at web-compatible opset, no NMS ─────────────
     need_fp32 = True
     if pwa_fp32.exists():
         opset = _get_onnx_opset(pwa_fp32)
-        if opset <= _WEB_ONNX_OPSET:
+        ops = _get_onnx_ops(pwa_fp32)
+        bad = _WEBGL_BLOCKLIST & ops
+        if opset <= _WEB_ONNX_OPSET and not bad:
             need_fp32 = False
             logger.info(
-                "PWA FP32 already at opset %d: %s (%.1f MB)",
+                "PWA FP32 already WebGL-clean (opset %d): %s (%.1f MB)",
                 opset, pwa_fp32, file_size_mb(pwa_fp32),
             )
         else:
+            reason = f"opset {opset}" if opset > _WEB_ONNX_OPSET else f"bad ops {bad}"
             logger.info(
-                "PWA ONNX opset %d > %d -- re-exporting with opset %d",
-                opset, _WEB_ONNX_OPSET, _WEB_ONNX_OPSET,
+                "PWA ONNX not WebGL-compatible (%s) -- re-exporting", reason,
             )
             pwa_fp32.unlink()
             if pwa_int8.exists():
-                pwa_int8.unlink()  # must re-quantize after opset change
+                pwa_int8.unlink()  # must re-quantize after model change
 
     if need_fp32:
         if not pt_path.exists():
             raise FileNotFoundError(f"PT weights not found at {pt_path}")
-        logger.info("Exporting ONNX (opset %d) for PWA ...", _WEB_ONNX_OPSET)
+        logger.info(
+            "Exporting ONNX (opset %d, end2end=False) for PWA ...",
+            _WEB_ONNX_OPSET,
+        )
         yolo_model = YOLO(str(pt_path), task="detect")
+        # Disable end2end NMS so the graph stays WebGL-compatible.
+        yolo_model.model.end2end = False
         yolo_model.export(format="onnx", opset=_WEB_ONNX_OPSET)
         # Ultralytics writes next to the .pt → output/yolo26n.onnx
         generated = pt_path.with_suffix(".onnx")
         if generated.exists():
             shutil.move(str(generated), str(pwa_fp32))
             logger.info("Moved %s -> %s", generated, pwa_fp32)
+        # Validate
+        ops = _get_onnx_ops(pwa_fp32)
+        bad = _WEBGL_BLOCKLIST & ops
+        if bad:
+            logger.warning("PWA FP32 still has WebGL-blocklisted ops: %s", bad)
+        else:
+            logger.info("PWA FP32 is WebGL-clean (no GatherElements/Mod/TopK)")
         logger.info(
             "  PWA FP32 : %.1f MB  opset %d  (%s)",
             file_size_mb(pwa_fp32), _WEB_ONNX_OPSET, pwa_fp32,
