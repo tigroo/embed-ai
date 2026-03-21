@@ -95,7 +95,7 @@ def run(model: str, output_dir: str, summary_file: str):
     )
 
     # ── Build ONNX variants for PWA (directly in docs/pwa/models/) ──
-    export.export_onnx_for_pwa(output_root, model)
+    export.export_onnx_for_pwa(output_root, model_fp32="yolo26n-seg", model_int8="yolo26n")
 
     # ── Model accuracy evaluation (mAP) ──────────────────────────────
     eval_cache = output_root / "eval_cache.json"
@@ -139,6 +139,21 @@ def run(model: str, output_dir: str, summary_file: str):
     )
 
 
+def run_pwa_only(output_dir: str):
+    """Export uniquement les modèles ONNX pour le PWA :
+    - fp32.onnx (segmentation, yolo26n-seg)
+    - int8.onnx (détection, yolo26n)
+    """
+    output_root = Path(output_dir)
+    output_root.mkdir(parents=True, exist_ok=True)
+    # On suppose que les .pt existent déjà dans output/ ou sont téléchargés par export.export
+    # On force l'export des deux .pt si besoin
+    export.export("yolo26n-seg", output_root)
+    export.export("yolo26n", output_root)
+    export.export_onnx_for_pwa(output_root, model_fp32="yolo26n-seg", model_int8="yolo26n")
+    logger.info("PWA ONNX export done: fp32 (seg), int8 (detect)")
+
+
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
@@ -151,6 +166,10 @@ if __name__ == "__main__":
     parser.add_argument("--output", default="output", help="Output directory")
     parser.add_argument("--model", default="yolo26n-seg", help="Model name")
     parser.add_argument("--summary", default="summary.json", help="Summary JSON filename")
+    parser.add_argument("--pwa-only", action="store_true", help="Export only ONNX models for PWA (seg fp32, detect int8)")
     args = parser.parse_args()
 
-    run(output_dir=args.output, model=args.model, summary_file=args.summary)
+    if args.pwa_only:
+        run_pwa_only(output_dir=args.output)
+    else:
+        run(output_dir=args.output, model=args.model, summary_file=args.summary)

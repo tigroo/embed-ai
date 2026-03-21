@@ -68,9 +68,16 @@ function disposeTensor(t) {
  * @param {"fp32"|"int8"} variant
  */
 export async function loadModel(variant) {
+
   const meta = MODEL_META[variant] ?? MODEL_META.fp32;
 
+  // LOG: Entrée dans loadModel
+  console.log(`[detector] loadModel called with variant='${variant}'`);
+  logToServer(`[detector] loadModel called with variant='${variant}'`);
+
   if (currentModel === variant && session) {
+    const logDiv = document.getElementById("backend-log");
+    if (logDiv) logDiv.textContent = `Backend: ${activeBackend.toUpperCase()} (${meta.label})`;
     return { backend: activeBackend, size: meta.size, label: meta.label };
   }
 
@@ -79,12 +86,34 @@ export async function loadModel(variant) {
     session = null;
   }
 
-  const candidates = candidateProviders();
+  // Force WASM only for INT8
+  let candidates;
+  if (variant === "int8") {
+    candidates = ["wasm"];
+    console.log("[detector] INT8: forcing WASM backend only");
+    logToServer("[detector] INT8: forcing WASM backend only");
+  } else {
+    candidates = candidateProviders();
+  }
+
+  // LOG: Candidats choisis
+  console.log(`[detector] Candidates for variant='${variant}': [${candidates}]`);
+  logToServer(`[detector] Candidates for variant='${variant}': [${candidates}]`);
+
+  // LOG: Sécurité INT8
+  if (variant === "int8" && (candidates.length !== 1 || candidates[0] !== "wasm")) {
+    const msg = `[detector] ERROR: INT8 candidates not strictly WASM: [${candidates}]`;
+    console.error(msg);
+    logToServer(msg);
+  }
+
   console.log(`[detector] Loading ${meta.label} (${meta.path}), candidates: [${candidates}]`);
+  logToServer(`[detector] Loading ${meta.label} (${meta.path}), candidates: [${candidates}]`);
 
   for (const provider of candidates) {
     try {
       console.log(`[detector] trying ${provider} ...`);
+      logToServer(`[detector] trying ${provider} ...`);
       const s = await ort.InferenceSession.create(meta.path, {
         executionProviders: [provider],
         graphOptimizationLevel: "all",
@@ -104,10 +133,27 @@ export async function loadModel(variant) {
       session = s;
       currentModel = variant;
       activeBackend = provider;
+      if (variant === "int8" && provider !== "wasm") {
+        const msg = `[detector] ERROR: INT8 model loaded on non-WASM backend: ${provider}`;
+        console.error(msg);
+        logToServer(msg);
+        alert("INT8 model ne doit être utilisé que sur WASM. Rechargement forcé.");
+        await session.release();
+        session = null;
+        continue;
+      }
+      const logDiv = document.getElementById("backend-log");
+      if (logDiv) logDiv.textContent = `Backend: ${provider.toUpperCase()} (${meta.label})`;
       console.log(`[detector] OK ${meta.label} ready on ${provider}`);
+      logToServer(`[detector] OK ${meta.label} ready on ${provider}`);
+      console.log(`[detector] CONFIRM: activeBackend = ${activeBackend}`);
+      logToServer(`[detector] CONFIRM: activeBackend = ${activeBackend}`);
       return { backend: activeBackend, size: meta.size, label: meta.label };
     } catch (err) {
+      const logDiv = document.getElementById("backend-log");
+      if (logDiv) logDiv.textContent = `Backend FAIL: ${provider} (${err.message ?? err})`;
       console.warn(`[detector] FAIL ${provider}:`, err.message ?? err);
+      logToServer(`[detector] FAIL ${provider}: ${err.message ?? err}`);
     }
   }
 
@@ -316,4 +362,16 @@ let _osc = null;
 function getOffscreenCanvas() {
   if (!_osc) { _osc = document.createElement("canvas"); _osc.width = _osc.height = INPUT_SIZE; }
   return _osc;
+}
+
+function logToServer(msg) {
+  try {
+    fetch("/log_js", {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: msg,
+    });
+  } catch (e) {
+    // ignore
+  }
 }

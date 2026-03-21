@@ -14,6 +14,7 @@ will work after that.
 """
 
 import http.server
+import logging
 import mimetypes
 import os
 import socket
@@ -21,6 +22,23 @@ import ssl
 import subprocess
 import sys
 import tempfile
+
+
+output_dir = os.path.join(os.path.dirname(__file__), "output")
+os.makedirs(output_dir, exist_ok=True)
+logfile = os.path.join(output_dir, "pwa_server.log")
+logging.basicConfig(
+    filename=logfile,
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s"
+)
+logger = logging.getLogger("pwa_server")
+# Ajout d'un handler console pour stdout
+if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(console_handler)
 
 
 def get_local_ip() -> str:
@@ -72,12 +90,26 @@ class LoggingHandler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
     def log_message(self, fmt, *args):
-        # Print every request to stdout so we can debug serving issues
-        sys.stdout.write(
-            f"  [{self.log_date_time_string()}] "
-            f"{self.address_string()} - {fmt % args}\n"
-        )
-        sys.stdout.flush()
+        logger.info(f"{self.address_string()} - {fmt % args}")
+
+    def do_POST(self):
+        if self.path == "/log_backend":
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode("utf-8")
+            logger.info(f"BACKEND_LOG: {body}")
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+        elif self.path == "/log_js":
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode("utf-8")
+            logger.info(f"JS_LOG: {body}")
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+        else:
+            self.send_response(404)
+            self.end_headers()
 
 
 def main():
@@ -114,22 +146,15 @@ def main():
     else:
         model_info = "(no models/ directory found!)"
 
-    print()
-    print("=" * 60)
-    print("  PWA local server running")
-    print(f"  https://{ip}:{port}/pwa/")
-    print()
-    print(f"  Models: {model_info}")
-    print()
-    print("  Open this URL on your phone (same WiFi).")
-    print("  Accept the security warning (self-signed cert).")
-    print("=" * 60)
-    print()
+    logger.info("PWA local server running")
+    logger.info(f"https://{ip}:{port}/pwa/")
+    logger.info(f"Models: {model_info}")
+    logger.info("Open this URL on your phone (same WiFi). Accept the security warning (self-signed cert).")
 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nStopped.")
+        logger.info("Stopped.")
 
 
 if __name__ == "__main__":

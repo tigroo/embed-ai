@@ -254,6 +254,13 @@ function updateHudModel(info) {
   hModel.textContent = info.label;
   hSize.textContent  = info.size;
   hBack.textContent  = info.backend;
+  try {
+    fetch("/log_backend", {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: `${info.label} | ${info.backend}`
+    });
+  } catch {}
 }
 
 // ── Pause / Resume (iOS lifecycle) ──────────────────────────────────────────
