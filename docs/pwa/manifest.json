@@ -1,7 +1,7 @@
 {
-  "name": "YOLO Detect",
-  "short_name": "YOLO",
-  "description": "Real-time object detection in browser with YOLO v26",
+  "name": "YOLO Segment",
+  "short_name": "YOLO Seg",
+  "description": "Real-time object detection and segmentation in browser with YOLO v26",
   "start_url": "./index.html",
   "display": "standalone",
   "orientation": "portrait",
@@ -12,4 +12,3 @@
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
   ]
 }
-

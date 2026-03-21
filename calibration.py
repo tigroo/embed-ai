@@ -44,7 +44,7 @@ def _diagnose_calibration_set(
         images = images[::step][:sample_limit]
 
     logger.info("Diagnosing calibration set: %d images with FP32 model ...", len(images))
-    model = YOLO(str(weights), task="detect")
+    model = YOLO(str(weights))
 
     class_counts: dict[str, int] = {}
     images_with_detections = 0
@@ -132,7 +132,7 @@ def _read_model_names(output_dir: Path, weights: Path | None = None) -> dict[int
     # even before export.
     if weights is not None and weights.exists():
         try:
-            model = YOLO(str(weights), task="detect")
+            model = YOLO(str(weights))
             if hasattr(model, "names") and model.names:
                 logger.info(
                     "Read %d class names from PT model (metadata.yaml not yet created)",

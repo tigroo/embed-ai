@@ -149,7 +149,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="YOLO multi-backend video benchmark")
     parser.add_argument("--output", default="output", help="Output directory")
-    parser.add_argument("--model", default="yolo26n", help="Model name")
+    parser.add_argument("--model", default="yolo26n-seg", help="Model name")
     parser.add_argument("--summary", default="summary.json", help="Summary JSON filename")
     args = parser.parse_args()
 

@@ -340,11 +340,17 @@ pipenv run python main.py
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--model` | `yolo26n` | Model name (auto-downloaded if absent) |
+| `--model` | `yolo26n-seg` | Model name (auto-downloaded if absent) |
 | `--output` | `output` | Directory for all generated artifacts |
 | `--summary` | `summary.json` | Summary JSON filename |
 
 Videos are auto-discovered from `resources/*.mp4`.
+
+> **Note:** INT8 TFLite export is not available for segmentation models
+> due to a bug in Ultralytics 8.4.x (calibration data lacks seg masks).
+> The pipeline handles this gracefully — FP32/FP16 TFLite and both PWA
+> ONNX models are still produced.  Use `--model yolo26n` (detection) for
+> the full INT8 chain.
 
 ### Output
 

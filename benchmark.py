@@ -30,7 +30,7 @@ def _video_output_name(source: str, mode: str) -> str:
 def _benchmark_video_mode(mode_name: str, model_path: str, source: str, output_video_path: Path, imgsz: int,
                           device, max_frames: int = 0) -> dict:
     logger.info("[%s] model=%s  device=%s  imgsz=%d", mode_name, model_path, device, imgsz)
-    model = YOLO(model_path, task="detect")
+    model = YOLO(model_path)
     source_path = Path(source)
     width, height, fps, fourcc, total_in_file = _build_video_writer(source_path)
 
@@ -49,7 +49,7 @@ def _benchmark_video_mode(mode_name: str, model_path: str, source: str, output_v
     writer = cv2.VideoWriter(str(output_video_path), fourcc, fps, (width, height))
     cap = cv2.VideoCapture(str(source_path))
 
-    predict_kw: dict = {"imgsz": imgsz, "task": "detect", "verbose": False}
+    predict_kw: dict = {"imgsz": imgsz, "verbose": False}
     if device is not None:
         predict_kw["device"] = device
 

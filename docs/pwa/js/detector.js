@@ -1,10 +1,15 @@
 /**
- * YOLO v26 detector — ONNX Runtime Web.
+ * YOLO v26 segmentation — ONNX Runtime Web.
  *
  * The ONNX models are exported WITHOUT the end2end NMS head so that
- * all operators are compatible with the WebGL backend.  Output shape
- * is [1, 84, 8400] (4 bbox coords + 80 class scores × 8400 anchors).
- * NMS is performed here in JavaScript.
+ * all operators are compatible with the WebGL backend.
+ *
+ * Segmentation output:
+ *   output0: [1, 116, 8400] — 4 bbox + 80 class scores + 32 mask coefficients
+ *   output1: [1, 32, 160, 160] — 32 mask prototypes at 160×160
+ *
+ * NMS is performed in JavaScript.  Segmentation masks are computed by
+ * multiplying mask coefficients with prototypes, then sigmoid + crop.
  *
  * Backend negotiation (fastest → safest):
  *   1. WebGPU  (if available)
@@ -17,7 +22,9 @@
 
 const INPUT_SIZE = 640;
 const NUM_CLASSES = 80;
-const NUM_ANCHORS = 8400;
+const NUM_MASK_COEFFS = 32;
+const PROTO_H = 160;
+const PROTO_W = 160;
 
 let session = null;
 let currentModel = null;
@@ -31,8 +38,8 @@ export const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent)
 const _inputBuf = new Float32Array(3 * INPUT_SIZE * INPUT_SIZE);
 
 const MODEL_META = {
-  fp32: { path: "models/yolo26n_fp32.onnx", size: "~10 MB", label: "FP32" },
-  int8: { path: "models/yolo26n_int8.onnx",  size: "~3 MB",  label: "INT8" },
+  fp32: { path: "models/fp32.onnx", size: "~11 MB", label: "FP32" },
+  int8: { path: "models/int8.onnx", size: "~4 MB",  label: "INT8" },
 };
 
 /**
@@ -108,16 +115,17 @@ export async function loadModel(variant) {
 }
 
 /**
- * Run detection on a video frame.
+ * Run segmentation on a video frame.
  * @param {HTMLVideoElement} video
  * @param {number} confThreshold
+ * @returns {{ dets: Array, protos: Float32Array|null, inferMs: number }}
  */
 export async function detect(video, confThreshold = 0.35) {
   if (!session) throw new Error("Model not loaded");
 
   const vw = video.videoWidth;
   const vh = video.videoHeight;
-  if (!vw || !vh) return { dets: [], inferMs: 0 };
+  if (!vw || !vh) return { dets: [], protos: null, inferMs: 0 };
 
   // Prepare input tensor (NCHW, [1,3,640,640], 0-1 float)
   const canvas = getOffscreenCanvas();
@@ -145,56 +153,89 @@ export async function detect(video, confThreshold = 0.35) {
     disposeTensor(tensor);
   }
 
-  // Parse raw output [1, 84, 8400] and run NMS
-  const output = results[Object.keys(results)[0]];
-  const raw = output.data;
+  // Identify the two outputs:
+  //   detTensor: [1, 116, N]  — detections (3 dims, dim[1] > 32)
+  //   protoTensor: [1, 32, 160, 160] — mask prototypes (4 dims)
+  const keys = Object.keys(results);
+  let detTensor = null;
+  let protoTensor = null;
+  for (const k of keys) {
+    const t = results[k];
+    if (t.dims.length === 4) protoTensor = t;
+    else if (t.dims.length === 3) detTensor = t;
+  }
+  if (!detTensor) detTensor = results[keys[0]];
+
+  const detRaw = detTensor.data;
+  const numAnchors = detTensor.dims[2];
+  const numRows = detTensor.dims[1];            // 116 for seg, 84 for detect
+  const hasMasks = protoTensor && numRows > 84;
+
   const sx = vw / INPUT_SIZE;
   const sy = vh / INPUT_SIZE;
 
-  const dets = decodeAndNMS(raw, confThreshold, sx, sy);
+  const dets = decodeAndNMS(detRaw, numAnchors, numRows, confThreshold, sx, sy, hasMasks);
 
-  for (const k of Object.keys(results)) disposeTensor(results[k]);
-  return { dets, inferMs };
+  // Copy proto data before disposing tensors (it's a typed array view)
+  let protos = null;
+  if (hasMasks && protoTensor) {
+    protos = new Float32Array(protoTensor.data);
+  }
+
+  for (const k of keys) disposeTensor(results[k]);
+  return { dets, protos, inferMs };
 }
 
-// ── Raw [84, 8400] → detections + greedy NMS ─────────────────────────────
+// ── Decode + NMS ──────────────────────────────────────────────────────────────
 
 const NMS_IOU_THRESHOLD = 0.45;
 const MAX_DETECTIONS = 300;
 
 /**
- * Decode [84, 8400] raw tensor and apply per-class greedy NMS.
+ * Decode raw tensor and apply per-class greedy NMS.
  *
- * Layout (row-major in the flat array):
- *   raw[row * 8400 + anchor]
- *   rows 0-3 : cx, cy, w, h  (640×640 pixel space)
- *   rows 4-83: class scores   (post-sigmoid)
+ *   rows 0-3  : cx, cy, w, h  (640×640 pixel space)
+ *   rows 4-83 : class scores   (post-sigmoid)
+ *   rows 84-115: mask coefficients (seg models only)
  */
-function decodeAndNMS(raw, confThreshold, sx, sy) {
+function decodeAndNMS(raw, numAnchors, numRows, confThreshold, sx, sy, hasMasks) {
   const candidates = [];
 
-  for (let a = 0; a < NUM_ANCHORS; a++) {
+  for (let a = 0; a < numAnchors; a++) {
     let bestCls = 0;
     let bestScore = -Infinity;
     for (let c = 0; c < NUM_CLASSES; c++) {
-      const score = raw[(4 + c) * NUM_ANCHORS + a];
+      const score = raw[(4 + c) * numAnchors + a];
       if (score > bestScore) { bestScore = score; bestCls = c; }
     }
     if (bestScore < confThreshold) continue;
 
-    const cx = raw[0 * NUM_ANCHORS + a];
-    const cy = raw[1 * NUM_ANCHORS + a];
-    const w  = raw[2 * NUM_ANCHORS + a];
-    const h  = raw[3 * NUM_ANCHORS + a];
+    const cx = raw[0 * numAnchors + a];
+    const cy = raw[1 * numAnchors + a];
+    const w  = raw[2 * numAnchors + a];
+    const h  = raw[3 * numAnchors + a];
 
-    candidates.push({
+    const det = {
       x1: (cx - w / 2) * sx,
       y1: (cy - h / 2) * sy,
       x2: (cx + w / 2) * sx,
       y2: (cy + h / 2) * sy,
       conf: bestScore,
       cls: bestCls,
-    });
+    };
+
+    // Extract 32 mask coefficients for segmentation
+    if (hasMasks) {
+      const mc = new Float32Array(NUM_MASK_COEFFS);
+      for (let k = 0; k < NUM_MASK_COEFFS; k++) {
+        mc[k] = raw[(84 + k) * numAnchors + a];
+      }
+      det.maskCoeffs = mc;
+      // Store bbox in 640-space for mask cropping (before video scaling)
+      det.cx = cx; det.cy = cy; det.bw = w; det.bh = h;
+    }
+
+    candidates.push(det);
   }
 
   candidates.sort((a, b) => b.conf - a.conf);
@@ -217,6 +258,48 @@ function decodeAndNMS(raw, confThreshold, sx, sy) {
 
   return kept;
 }
+
+// ── Mask computation (exported for app.js) ──────────────────────────────────
+
+/**
+ * Compute a binary mask for one detection.
+ *
+ * @param {Object} det  — detection with .maskCoeffs and .cx/.cy/.bw/.bh
+ * @param {Float32Array} protos — [32 × 160 × 160] flat array
+ * @returns {Uint8Array} — PROTO_H × PROTO_W mask (0 or 255), cropped to bbox
+ */
+export function computeMask(det, protos) {
+  const mask = new Uint8Array(PROTO_H * PROTO_W);
+  const mc = det.maskCoeffs;
+  if (!mc || !protos) return mask;
+
+  // Bbox in proto-space (160/640 = 0.25 scale)
+  const protoScale = PROTO_H / INPUT_SIZE;
+  const bx1 = Math.max(0, Math.floor((det.cx - det.bw / 2) * protoScale));
+  const by1 = Math.max(0, Math.floor((det.cy - det.bh / 2) * protoScale));
+  const bx2 = Math.min(PROTO_W, Math.ceil((det.cx + det.bw / 2) * protoScale));
+  const by2 = Math.min(PROTO_H, Math.ceil((det.cy + det.bh / 2) * protoScale));
+
+  // mask(y,x) = sigmoid(Σ mc[k] * protos[k * 160*160 + y*160 + x])
+  const ppx = PROTO_H * PROTO_W;   // pixels per prototype plane
+  for (let y = by1; y < by2; y++) {
+    for (let x = bx1; x < bx2; x++) {
+      let val = 0;
+      const idx = y * PROTO_W + x;
+      for (let k = 0; k < NUM_MASK_COEFFS; k++) {
+        val += mc[k] * protos[k * ppx + idx];
+      }
+      // sigmoid
+      mask[idx] = (1 / (1 + Math.exp(-val))) > 0.5 ? 255 : 0;
+    }
+  }
+
+  return mask;
+}
+
+export { PROTO_H, PROTO_W, INPUT_SIZE as MODEL_INPUT_SIZE };
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
 function iou(a, b) {
   const ix1 = Math.max(a.x1, b.x1);

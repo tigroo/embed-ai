@@ -16,7 +16,7 @@
  *   • Global error/rejection guards so nothing crashes the page.
  *   • No Service Worker registration on iOS (removes a reload vector).
  */
-import { loadModel, detect, isIOS } from "./detector.js";
+import { loadModel, detect, computeMask, isIOS, PROTO_H, PROTO_W, MODEL_INPUT_SIZE } from "./detector.js";
 import { COCO_LABELS, classColor } from "./coco-labels.js";
 
 // ── Global crash guards ─────────────────────────────────────────────────────
@@ -130,8 +130,8 @@ async function loop() {
       return;
     }
 
-    const { dets, inferMs } = await detect(video, confThreshold);
-    drawDetections(dets);
+    const { dets, protos, inferMs } = await detect(video, confThreshold);
+    drawDetections(dets, protos);
 
     const totalMs = performance.now() - t0;
     const fps = 1000 / totalMs;
@@ -155,11 +155,82 @@ async function loop() {
   scheduleNext();
 }
 
-// ── Drawing ─────────────────────────────────────────────────────────────────
+// ── Drawing (segmentation masks + bounding boxes) ───────────────────────────
 
-function drawDetections(dets) {
+// Offscreen canvas for mask compositing at prototype resolution.
+let _maskCanvas = null;
+let _maskCtx = null;
+function getMaskCanvas() {
+  if (!_maskCanvas) {
+    _maskCanvas = document.createElement("canvas");
+    _maskCanvas.width = PROTO_W;
+    _maskCanvas.height = PROTO_H;
+    _maskCtx = _maskCanvas.getContext("2d", { willReadFrequently: true });
+  }
+  return { c: _maskCanvas, cx: _maskCtx };
+}
+
+const MASK_ALPHA = 0.40;
+
+function drawDetections(dets, protos) {
   ctx.clearRect(0, 0, overlay.width, overlay.height);
   const scale = Math.max(1, overlay.width / 640);
+  const hasMasks = protos && dets.length > 0 && dets[0].maskCoeffs;
+
+  // ── 1. Draw segmentation masks ─────────────────────────────────────
+  if (hasMasks) {
+    const { c: mc, cx: mctx } = getMaskCanvas();
+    // Scale from proto space (160×160) to overlay (video) space
+    const sxm = overlay.width / MODEL_INPUT_SIZE;
+    const sym = overlay.height / MODEL_INPUT_SIZE;
+
+    ctx.save();
+    ctx.globalAlpha = MASK_ALPHA;
+
+    for (const d of dets) {
+      const mask = computeMask(d, protos);
+
+      // Build an ImageData at proto resolution for this mask
+      const imgData = mctx.createImageData(PROTO_W, PROTO_H);
+      const rgba = imgData.data;
+      const color = classColor(d.cls);
+      // Parse hex color
+      const r = parseInt(color.slice(1, 3), 16);
+      const g = parseInt(color.slice(3, 5), 16);
+      const b = parseInt(color.slice(5, 7), 16);
+
+      for (let i = 0; i < mask.length; i++) {
+        if (mask[i]) {
+          const off = i * 4;
+          rgba[off]     = r;
+          rgba[off + 1] = g;
+          rgba[off + 2] = b;
+          rgba[off + 3] = 255;
+        }
+      }
+      mctx.putImageData(imgData, 0, 0);
+
+      // Crop region in proto space → overlay space
+      const protoScale = PROTO_H / MODEL_INPUT_SIZE;
+      const px1 = Math.max(0, (d.cx - d.bw / 2) * protoScale) | 0;
+      const py1 = Math.max(0, (d.cy - d.bh / 2) * protoScale) | 0;
+      const px2 = Math.min(PROTO_W, (d.cx + d.bw / 2) * protoScale + 1) | 0;
+      const py2 = Math.min(PROTO_H, (d.cy + d.bh / 2) * protoScale + 1) | 0;
+      const pw = px2 - px1;
+      const ph = py2 - py1;
+      if (pw > 0 && ph > 0) {
+        ctx.drawImage(mc,
+          px1, py1, pw, ph,                                    // src crop
+          px1 / protoScale * sxm, py1 / protoScale * sym,     // dst pos
+          pw / protoScale * sxm, ph / protoScale * sym,        // dst size
+        );
+      }
+    }
+
+    ctx.restore();
+  }
+
+  // ── 2. Draw bounding boxes + labels ────────────────────────────────
   for (const d of dets) {
     const color = classColor(d.cls);
     const label = `${COCO_LABELS[d.cls] ?? d.cls} ${(d.conf * 100).toFixed(0)}%`;

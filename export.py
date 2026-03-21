@@ -90,7 +90,7 @@ def export(model: str, output_dir: Path) -> Path:
 
     # 3. Download via Ultralytics
     logger.info("Weights not found -- downloading %s via Ultralytics ...", name)
-    YOLO(name, task="detect")  # auto-downloads to CWD
+    YOLO(name)  # auto-downloads to CWD
     downloaded = Path.cwd() / name
     if downloaded.exists() and downloaded.resolve() != target.resolve():
         _move_artifact(downloaded, output_dir)
@@ -158,7 +158,7 @@ def export_tflite(
 
         tf_gpu_state = _hide_tf_gpus()
         try:
-            pt_model = YOLO(str(pt_path), task="detect")
+            pt_model = YOLO(str(pt_path))
 
             if need_float:
                 # Produces: _float32.tflite, _float16.tflite
@@ -179,9 +179,18 @@ def export_tflite(
                     "  Calibration: %s (auto-downloaded by Ultralytics)",
                     _INT8_CAL_DATA,
                 )
-                with HeartBeat("PT -> ONNX -> SavedModel -> TFLite (int8)"):
-                    pt_model.export(format="tflite", int8=True, data=_INT8_CAL_DATA)
-                _flatten_saved_model(saved_model_dir, output_root)
+                try:
+                    with HeartBeat("PT -> ONNX -> SavedModel -> TFLite (int8)"):
+                        pt_model.export(format="tflite", int8=True, data=_INT8_CAL_DATA)
+                    _flatten_saved_model(saved_model_dir, output_root)
+                except Exception as e:
+                    logger.warning(
+                        "INT8 TFLite export failed: %s -- "
+                        "skipping INT8 variants (FP32/FP16 still available). "
+                        "This is a known issue with segmentation models in "
+                        "Ultralytics 8.4.x (calibration data lacks seg masks).",
+                        e,
+                    )
         finally:
             _restore_tf_gpus(tf_gpu_state)
             logger.info(
@@ -207,6 +216,15 @@ def export_tflite(
         sz = file_size_mb(Path(p))
         if sz is not None:
             logger.info("  %s : %.1f MB  (%s)", tag, sz, p)
+
+    # Remove entries whose files were never generated (e.g. INT8 export
+    # failed for segmentation models).  Downstream code (benchmark,
+    # evaluation) already checks for file existence, but a clean dict
+    # makes the summary more accurate.
+    model_list = {
+        tag: p for tag, p in model_list.items()
+        if Path(p).exists()
+    }
 
     return model_list
 
@@ -253,8 +271,10 @@ def export_onnx_for_pwa(output_root: Path, model: str) -> tuple[Path, Path]:
     pwa_dir = Path("docs") / "pwa" / "models"
     pwa_dir.mkdir(parents=True, exist_ok=True)
 
-    pwa_fp32 = pwa_dir / f"{model}_fp32.onnx"
-    pwa_int8 = pwa_dir / f"{model}_int8.onnx"
+    # Fixed names — the PWA JS expects these exact paths regardless of
+    # the source model variant (yolo26n, yolo26n-seg, etc.).
+    pwa_fp32 = pwa_dir / "fp32.onnx"
+    pwa_int8 = pwa_dir / "int8.onnx"
 
     # Ops that the WebGL backend of ORT-Web cannot execute.
     _WEBGL_BLOCKLIST = {"GatherElements", "Mod", "TopK"}
@@ -287,9 +307,10 @@ def export_onnx_for_pwa(output_root: Path, model: str) -> tuple[Path, Path]:
             "Exporting ONNX (opset %d, end2end=False) for PWA ...",
             _WEB_ONNX_OPSET,
         )
-        yolo_model = YOLO(str(pt_path), task="detect")
+        yolo_model = YOLO(str(pt_path))
         # Disable end2end NMS so the graph stays WebGL-compatible.
-        yolo_model.model.end2end = False
+        if hasattr(yolo_model.model, "end2end"):
+            yolo_model.model.end2end = False
         yolo_model.export(format="onnx", opset=_WEB_ONNX_OPSET)
         # Ultralytics writes next to the .pt → output/yolo26n.onnx
         generated = pt_path.with_suffix(".onnx")
@@ -335,17 +356,33 @@ def export_onnx_for_pwa(output_root: Path, model: str) -> tuple[Path, Path]:
 
 
 def _find_head_nodes(onnx_path: Path) -> list[str]:
-    """Return node names belonging to the YOLO detection head.
+    """Return node names belonging to the YOLO detection / segmentation head.
 
-    In YOLO v26 the detection head is ``/model.23/`` — it contains the
-    one2one_cv2 (boxes), one2one_cv3 (classes) convolutions and the
-    post-processing ops (Sigmoid, TopK, NMS-like gather/sort).
-    Keeping these in fp32 preserves confidence precision.
+    The detection head is the highest-numbered ``/model.N/`` block (e.g.
+    ``/model.23/`` for YOLO v26).  It contains the cv2 (boxes), cv3
+    (classes) convolutions and, for segmentation models, the prototype
+    mask convolutions.  Keeping these in FP32 preserves confidence and
+    mask precision.
     """
+    import re
+
     import onnx
     graph = onnx.load(str(onnx_path)).graph
-    head = [n.name for n in graph.node if n.name.startswith("/model.23/")]
+
+    # Find the highest /model.N/ index across all nodes.
+    max_idx = -1
+    for n in graph.node:
+        m = re.match(r"/model\.(\d+)/", n.name)
+        if m:
+            max_idx = max(max_idx, int(m.group(1)))
+
+    if max_idx < 0:
+        logger.warning("Could not detect head layer index in ONNX graph")
+        return []
+
+    prefix = f"/model.{max_idx}/"
+    head = [n.name for n in graph.node if n.name.startswith(prefix)]
     if head:
-        logger.info("Detection head: %d nodes under /model.23/ kept in FP32", len(head))
+        logger.info("Detection head: %d nodes under %s kept in FP32", len(head), prefix)
     return head
 

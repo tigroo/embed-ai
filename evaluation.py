@@ -21,7 +21,7 @@ def evaluate(model_list: dict[str, str], runs_dir: Path | None = None) -> list[d
             logger.warning("Model %s not found -- skipping eval", model_path)
             continue
         logger.info("Evaluating %-10s (%s) on %s ...", tag, p.name, _EVAL_DATA)
-        model = YOLO(str(p), task="detect")
+        model = YOLO(str(p))
         val_kw: dict = {
             "data": _EVAL_DATA,
             "imgsz": TFLITE_IMG_SIZE,
