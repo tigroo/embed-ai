@@ -170,14 +170,10 @@ FP32 (10 MB) → FP16 (5 MB) → INT8 (3 MB).
 
 **int8_full** forces everything to int8 — the detection head confidence scores are crushed.  
 **Kept as a demo of what goes wrong** when you blindly quantise without tree analysis.
->
-> **onnx_int8** (used in the PWA) explicitly excludes `/model.23/*`
-> from quantisation via `nodes_to_exclude`. Backbone is calibrated
-> INT8 (using coco128), head stays FP32.
->
-> **QAT** (Quantization-Aware Training) retrains the model with
-> quantisation in the loop so it learns to produce robust confidences
-> despite int8 rounding. Out of scope here.
+
+**QAT** (Quantization-Aware Training) retrains the model with
+quantisation in the loop so it learns to produce robust confidences
+despite int8 rounding. Out of scope here.
 
 ---
 
