@@ -134,7 +134,6 @@ def export_tflite(
             pt_model = YOLO(str(pt_path))
 
             if need_float:
-                # Produces: _float32.tflite, _float16.tflite
                 logger.info("Exporting TFLite float32 + float16 ...")
                 with HeartBeat("PT -> ONNX -> SavedModel -> TFLite (float)"):
                     pt_model.export(format="tflite")
@@ -142,7 +141,6 @@ def export_tflite(
 
             # Only export INT8 if task is detect
             if task == "detect" and need_int8:
-                # Utilise le YAML de calibration personnalisé si fourni, sinon coco128.yaml
                 if calibration_yaml and Path(calibration_yaml).exists():
                     _INT8_CAL_DATA = calibration_yaml
                     logger.info(
