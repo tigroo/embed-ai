@@ -1,6 +1,6 @@
 # embed-ai
 
-A hands-on demo: 
+A hands-on demo:
 
 * take a YOLO v26 segmentation model
 * shrink it
@@ -28,12 +28,21 @@ A hands-on demo:
 
 ### Mesure the effort
 
-| Goal                | Metric              | Edge constraint       |
-|---------------------|---------------------|-----------------------|
-| Smaller download    | File size (MB)      | network               |
-| Lower latency       | Inference time (ms) | Real-time at 30 fps   |
-| Less memory         | Peak RAM (MB)       | 2–4 GB shared with OS |
-| Less energy         | Joules per frame?   | Battery life          |
+| Goal             | Metric              | Edge constraint       |
+|------------------|---------------------|-----------------------|
+| Smaller download | File size (MB)      | network               |
+| Lower latency    | Inference time (ms) | Real-time at 30 fps   |
+| Less memory      | Peak RAM (MB)       | 2–4 GB shared with OS |
+| Less energy      | Joules per frame?   | Battery life          |
+
+### Mesure the effect
+
+```
+  ☑ Measure file size        (did it shrink?)
+  ☑ Measure mAP50 / mAP50-95 (did accuracy drop?)
+  ☑ Measure FPS on video     (did it speed up?)
+  ☑ Result check             (are predictions still correct?)
+```
 
 The tradeoff triangle — pick two:
 
@@ -50,10 +59,10 @@ The tradeoff triangle — pick two:
 
 Two recommended builds for any embedding project:
 
-| Build     | Format     | 
-|-----------|------------|
-| Quality   | FP16/FP32  | 
-| Fast      | INT8       |
+| Build   | Format    | 
+|---------|-----------|
+| Quality | FP16/FP32 | 
+| Fast    | INT8      |
 
 ---
 
@@ -61,41 +70,41 @@ Two recommended builds for any embedding project:
 
 ```
   ┌───────────────────────────────────────────────────────────────────┐
-  │ Step 1  export                                                    │
+  │ Step 1  Export                                                    │
   │ Download the model                                                │
   └────────────────────────────────┬──────────────────────────────────┘
                                    │
                                    ▼
   ┌───────────────────────────────────────────────────────────────────┐
-  │ Step 2  calibration                                               │
-  │ Run FP32 model on 80 sample frames → diagnostic report.           │
+  │ Step 2  Calibrate                                                 │
+  │ Run FP32 model on 80 sample frames → diagnostic report            │
   └────────────────────────────────┬──────────────────────────────────┘
                                    │
                                    ▼
   ┌───────────────────────────────────────────────────────────────────┐
-  │ Step 3  tflite                                                    │
+  │ Step 3  Convert                                                   │
   │ Under the hood: .pt → ONNX → SavedModel → onnx2tf → .tflite       │
   └────────────────────────────────┬──────────────────────────────────┘
                                    │
                                    ▼
   ┌───────────────────────────────────────────────────────────────────┐
-  │ Step 5  evaluation                                                │
-  │ Measure: mAP50, mAP50-95, precision, recall.                      │
-  │ Analyze confusion matrices.                                       │
+  │ Step 5  Evaluate                                                  │
+  │ Measure: mAP50, mAP50-95, precision, recall                       │
+  │ Analyze confusion matrices                                        │
   └────────────────────────────────┬──────────────────────────────────┘
                                    │
                                    ▼
   ┌───────────────────────────────────────────────────────────────────┐
-  │ Step 6  benchmark                                                 │
-  │ For each video × each model variant (pt GPU/CPU + 4 TFLite):      │
-  │   Measure: FPS, avg inference time, avg confidence.               │
+  │ Step 6  Bench                                                     │
+  │ For each example × each model variant:                            │
+  │   Measure: FPS, avg inference time, avg confidence                │
   └────────────────────────────────┬──────────────────────────────────┘
                                    │
                                    ▼
   ┌───────────────────────────────────────────────────────────────────┐
-  │ Step 7  summary                                                   │
-  │   sources, artifacts (sizes), evaluation (mAP), benchmarks (FPS), │
-  │   calibration report, GPU info.                                   │
+  │ Step 7  Summarize                                                 │
+  │   sources, artifacts, evaluation,  (FPS),                         │
+  │   benchmarks, calibration, GPU info                               │
   └───────────────────────────────────────────────────────────────────┘
 ```
 
@@ -103,24 +112,9 @@ Two recommended builds for any embedding project:
 
 ## Yolo26 example
 
-###
+### Going Bigger ?
 
 [Yolo tasks and modes](https://docs.ultralytics.com/models/yolo26/#supported-tasks-and-modes)
-
-## Going Bigger ?
-
-
-```
-  Model           Params    PT size   ONNX FP32   Best for
-  ──────────────  ────────  ────────  ──────────  ──────────────────────────────────────────────
-  yolo26n         2.4 M      5 MB     10 MB       ✅ tiny + fast demo
-  yolo26s         9.2 M     19 MB     37 MB       better int8 accuracy
-  yolo26m        20.0 M     40 MB     79 MB       production accuracy
-  yolo26l        46.7 M     97 MB    187 MB       large objects, high accuracy
-  yolo26x        99.0 M    205 MB    395 MB       highest accuracy, very heavy
-```
-
-**Segmentation models:**
 
 ```
   Model           Params    PT size   ONNX FP32   Best for
@@ -177,42 +171,33 @@ Two recommended builds for any embedding project:
 
 **What we do NOT use (but could):**
 
-| Technique | Why not                                                |
-|-----------|--------------------------------------------------------|
-| QAT (Quantization-Aware Training) | Needs retraining; out of scope |
-| Pruning / Clustering | More useful on larger models                |
-| Edge TPU / NNAPI delegates | Desktop demo, not mobile native       |
-
-**Checklist after each optimisation:**
-
-```
-  ☑ Measure file size        (did it shrink?)
-  ☑ Measure mAP50 / mAP50-95 (did accuracy drop?)
-  ☑ Measure FPS on video     (did it speed up?)
-  ☑ Visual check             (are detections still correct?)
-```
+| Technique                         | Why not                         |
+|-----------------------------------|---------------------------------|
+| QAT (Quantization-Aware Training) | Needs retraining; out of scope  |
+| Pruning / Clustering              | More useful on larger models    |
+| Edge TPU / NNAPI delegates        | Desktop demo, not mobile native |
 
 > The real reduction comes from **quantisation within TFLite**:
 > FP32 (10 MB) → FP16 (5 MB) → INT8 (3 MB).
 
 > **int8_dyn** stores weights as int8 but dequantizes to FP32 at
-> runtime.  Same file size as int8_full, detection works.
+> runtime. Same file size as int8_full, detection works.
 >
 > **int8_full** forces everything to int8 — the detection head
 > confidence scores are crushed.  **Kept as a demo of what goes
 > wrong** when you blindly quantise without QAT.
 >
 > **onnx_int8** (used in the PWA) explicitly excludes `/model.23/*`
-> from quantisation via `nodes_to_exclude`.  Backbone is calibrated
+> from quantisation via `nodes_to_exclude`. Backbone is calibrated
 > INT8 (using coco128), head stays FP32.
 >
 > **QAT** (Quantization-Aware Training) retrains the model with
 > quantisation in the loop so it learns to produce robust confidences
-> despite int8 rounding.  Out of scope here.
+> despite int8 rounding. Out of scope here.
 
 ---
 
-##  Why int8_full Breaks (and How We Fix It)
+## Why int8_full Breaks (and How We Fix It)
 
 ```
   ┌──────────────────────────────────────────────────────────────────┐
@@ -292,21 +277,21 @@ Two recommended builds for any embedding project:
 
 ## Progressive Web App (PWA)
 
-  ┌───────────────────────────────────────────────────────────────────┐
-  │ Step 1  export                                                    │
-  │ Download yolo26n.onnx.
-  │ opset 17, end2end=False, no built-in NMS 
-  └────────────────────────────────┬──────────────────────────────────┘
-                                   │
-                                   ▼
-  ┌───────────────────────────────────────────────────────────────────┐
-  │ Step 2  pwa                                                       │
-  │ Export ONNX at opset 17, end2end=False, no built-in NMS           │
-  │ Quantize backbone to INT8, keep detection head FP32.              │
-  │ These models are WebGL-compatible (no GatherElements/Mod/TopK).   │
-  └────────────────────────────────┬──────────────────────────────────┘
-                                   │
-                                   ▼
+┌───────────────────────────────────────────────────────────────────┐
+│ Step 1 export │
+│ Download yolo26n.onnx.
+│ opset 17, end2end=False, no built-in NMS
+└────────────────────────────────┬──────────────────────────────────┘
+│
+▼
+┌───────────────────────────────────────────────────────────────────┐
+│ Step 2 pwa │
+│ Export ONNX at opset 17, end2end=False, no built-in NMS │
+│ Quantize backbone to INT8, keep detection head FP32. │
+│ These models are WebGL-compatible (no GatherElements/Mod/TopK). │
+└────────────────────────────────┬──────────────────────────────────┘
+│
+▼
 
 <p align="center">
   <img src="docs/pwa/qr.svg" alt="QR code" width="200" /><br/>
@@ -315,12 +300,13 @@ Two recommended builds for any embedding project:
 
 [Yolo26 formats](https://docs.ultralytics.com/modes/export/#export-formats)
 
-| Model    | Size    | Quantization             | Backend                |
-|----------|---------|--------------------------|------------------------|
-| **FP32** | ~10 MB  | Full precision           | WebGPU / WebGL / WASM  |
-| **INT8** | ~3.5 MB | Backbone INT8, head FP32 | WebGPU / WebGL / WASM  |
+| Model    | Size    | Quantization             | Backend               |
+|----------|---------|--------------------------|-----------------------|
+| **FP32** | ~10 MB  | Full precision           | WebGPU / WebGL / WASM |
+| **INT8** | ~3.5 MB | Backbone INT8, head FP32 | WebGPU / WebGL / WASM |
 
 Both models are **pipeline artifacts** generated by `main.py` (step 4):
+
 - FP32 = ONNX exported at opset 17, `end2end=False`
 - INT8 = same graph, backbone quantized with `onnxruntime.quantize_dynamic`,
   detection head `/model.23/*` excluded to preserve confidence precision
@@ -339,18 +325,18 @@ pipenv run python main.py
 
 ### CLI Arguments
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--model` | `yolo26n-seg` | Model name (auto-downloaded if absent) |
-| `--output` | `output` | Directory for all generated artifacts |
-| `--summary` | `summary.json` | Summary JSON filename |
+| Flag        | Default        | Description                            |
+|-------------|----------------|----------------------------------------|
+| `--model`   | `yolo26n-seg`  | Model name (auto-downloaded if absent) |
+| `--output`  | `output`       | Directory for all generated artifacts  |
+| `--summary` | `summary.json` | Summary JSON filename                  |
 
 Videos are auto-discovered from `resources/*.mp4`.
 
 > **Note:** INT8 TFLite export is not available for segmentation models
 > due to a bug in Ultralytics 8.4.x (calibration data lacks seg masks).
 > The pipeline handles this gracefully — FP32/FP16 TFLite and both PWA
-> ONNX models are still produced.  Use `--model yolo26n` (detection) for
+> ONNX models are still produced. Use `--model yolo26n` (detection) for
 > the full INT8 chain.
 
 ### Output
@@ -410,6 +396,8 @@ git add -A && git commit -m "pipeline run" && git push
 
 ## PWA quantized ONNX model
 
-Due to Split operators in the segmentation graph, static int8 quantization is not possible for ONNX. Only dynamic quantization is used for the PWA quantized model, which reduces file size but not as much as TFLite int8.
+Due to Split operators in the segmentation graph, static int8 quantization is not possible for ONNX. Only dynamic
+quantization is used for the PWA quantized model, which reduces file size but not as much as TFLite int8.
 
-The PWA "Quantized" model (quant.onnx, ~4 MB) uses ONNX dynamic quantization. Full integer quantization is not supported for segmentation models due to Split operators in the graph.
+The PWA "Quantized" model (quant.onnx, ~4 MB) uses ONNX dynamic quantization. Full integer quantization is not supported
+for segmentation models due to Split operators in the graph.
