@@ -37,21 +37,25 @@ def _benchmark_video_mode(
     imgsz: int,
     device,
     max_frames: int = 0,
+    task: str = None,
 ) -> dict:
     logger.info(
         "[%s] model=%s  device=%s  imgsz=%d", mode_name, model_path, device, imgsz
     )
-    model_base = os.path.basename(model_path)
-    if (
-        model_base.endswith("-seg.tflite")
-        or model_base.endswith("-seg.pt")
-        or model_base.endswith("-seg.onnx")
-        or model_base.endswith("-seg")
-    ):
-        task_type = "segment"
+    if task is not None:
+        model = YOLO(model_path, task=task)
     else:
-        task_type = "detect"
-    model = YOLO(model_path, task=task_type)
+        model_base = os.path.basename(model_path)
+        if (
+            model_base.endswith("-seg.tflite")
+            or model_base.endswith("-seg.pt")
+            or model_base.endswith("-seg.onnx")
+            or model_base.endswith("-seg")
+        ):
+            task_type = "segment"
+        else:
+            task_type = "detect"
+        model = YOLO(model_path, task=task_type)
     source_path = Path(source)
     width, height, fps, fourcc, total_in_file = _build_video_writer(source_path)
 
@@ -153,6 +157,7 @@ def bench(
     source_paths: list[Path],
     output_root: Path,
     torch_gpu_ok: bool,
+    task: str = None,
 ) -> dict[str, list[dict]]:
     pt_gpu_device = 0 if torch_gpu_ok else "cpu"
     all_video_results: dict[str, list[dict]] = {}
@@ -206,6 +211,7 @@ def bench(
                     imgsz=sz,
                     device=dev,
                     max_frames=max_frames,
+                    task=task,
                 )
             )
         all_video_results[source_path.name] = vid_results

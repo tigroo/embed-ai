@@ -66,9 +66,6 @@ def _diagnose_calibration_set(
     for cls_name, cnt in sorted_counts.items():
         logger.info("  %-20s %5d detections", cls_name, cnt)
 
-    # NOTE: this set is DIAGNOSTIC ONLY -- it does not influence what the
-    # model detects.  COCO covers vehicles, pedestrians, traffic lights,
-    # stop signs, but NOT traffic cones, road panels, markings, barriers.
     expected_common = {  # Vulnerable road users
         "person",
         "bicycle",
@@ -108,13 +105,6 @@ def _diagnose_calibration_set(
 
 
 def _read_model_names(output_dir: Path, weights: Path | None = None) -> dict[int, str]:
-    """Read COCO class names from model metadata, PT checkpoint, or fallback.
-
-    Resolution order:
-      1. ``output_dir/saved_model/metadata.yaml`` (post-export)
-      2. Load the PT checkpoint and read ``model.names`` (always available)
-      3. Generic ``{0: "object"}`` as last resort
-    """
     meta_path = output_dir / _SAVED_MODEL_DIR / "metadata.yaml"
     if meta_path.exists():
         with open(meta_path) as f:
@@ -124,9 +114,6 @@ def _read_model_names(output_dir: Path, weights: Path | None = None) -> dict[int
             return {i: n for i, n in enumerate(names)}
         return names
 
-    # Fallback: read names from the PT checkpoint itself (always 80 COCO
-    # classes for pretrained models) so the calibration YAML is correct
-    # even before export.
     if weights is not None and weights.exists():
         try:
             model = YOLO(str(weights))
@@ -266,9 +253,6 @@ def _extract_calibration_frames(
                         f.write(
                             f"{int(cls_id)} {x_center:.6f} {y_center:.6f} {bw:.6f} {bh:.6f}\n"
                         )
-            else:
-                # No detections: leave file empty (already touched)
-                pass
         logger.info("Label files filled for all calibration frames.")
 
     return str(cal_yaml)

@@ -134,7 +134,7 @@ def main():
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(cert, key)
 
-    server = http.server.HTTPServer(("0.0.0.0", port), LoggingHandler) # type: ignore[arg-type]
+    server = http.server.HTTPServer(("0.0.0.0", port), LoggingHandler)  # type: ignore[arg-type]
     server.socket = ctx.wrap_socket(server.socket, server_side=True)
 
     # List what we will serve

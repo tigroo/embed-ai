@@ -5,15 +5,17 @@ YOLO export: download weights and produce TFLite + ONNX variants.
 import os
 import shutil
 from pathlib import Path
+import re
 
+import onnx
 import torch
 from onnxruntime import quantization
 from ultralytics import YOLO
-
 from config import logger, file_size_mb
 from heartbeat import HeartBeat
 
 _WEB_ONNX_OPSET = 17
+
 
 def _hide_tf_gpus():
     saved_env = os.environ.get("CUDA_VISIBLE_DEVICES")  # may be None
@@ -253,10 +255,6 @@ def _find_head_nodes(onnx_path: Path) -> list[str]:
     mask convolutions.  Keeping these in FP32 preserves confidence and
     mask precision.
     """
-    import re
-
-    import onnx
-
     graph = onnx.load(str(onnx_path)).graph
 
     # Find the highest /model.N/ index across all nodes.

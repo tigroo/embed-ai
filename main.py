@@ -118,6 +118,7 @@ def run(
                 source_paths=source_paths,
                 output_root=output_root,
                 torch_gpu_ok=torch_gpu_ok,
+                task=task,
             )
             bench_cache.write_text(json.dumps(all_video_results, indent=2))
             logger.info("Benchmark results cached to %s", bench_cache)

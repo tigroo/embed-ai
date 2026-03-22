@@ -1,7 +1,5 @@
 from pathlib import Path
-
 from ultralytics import YOLO
-
 from config import logger, TFLITE_IMG_SIZE, file_size_mb
 
 _EVAL_DATA = "coco8.yaml"
