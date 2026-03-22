@@ -7,21 +7,17 @@ from ultralytics import YOLO
 from config import logger, TFLITE_IMG_SIZE
 from heartbeat import HeartBeat
 
-_CAL_TARGET_TOTAL = 1000    # target total calibration frames across all videos
-_CAL_MIN_TOTAL = 300        # absolute minimum (safety net)
-_CAL_MIN_PER_VIDEO = 10     # always extract at least this many per video
+_CAL_TARGET_TOTAL = 1000  # target total calibration frames across all videos
+_CAL_MIN_TOTAL = 300  # absolute minimum (safety net)
+_CAL_MIN_PER_VIDEO = 10  # always extract at least this many per video
 _CALIBRATION_FRAMES_DIR = "calibration_frames"
 _CALIBRATION_YAML_NAME = "calibration_frames.yaml"
 _CALIBRATION_GLOB = "calibration_image_sample_data_*"
 _SAVED_MODEL_DIR = "saved_model"
 
 
-def _diagnose_calibration_set(
-    cal_images_dir: Path,
-    weights: Path,
-    sample_limit: int = 80,
-    conf: float = 0.25,
-) -> dict:
+def _diagnose_calibration_set(cal_images_dir: Path, weights: Path, sample_limit: int = 80,
+                              conf: float = 0.25, ) -> dict:
     """Run FP32 model on calibration images and report class distribution.
 
     INT8 quantization computes per-layer activation ranges from the
@@ -51,10 +47,7 @@ def _diagnose_calibration_set(
 
     with HeartBeat("calibration diagnosis", interval=15):
         for img_path in images:
-            results = model.predict(
-                source=str(img_path), imgsz=TFLITE_IMG_SIZE,
-                verbose=False, conf=conf,
-            )
+            results = model.predict(source=str(img_path), imgsz=TFLITE_IMG_SIZE, verbose=False, conf=conf, )
             if results and results[0].boxes is not None and len(results[0].boxes):
                 images_with_detections += 1
                 for cls_id in results[0].boxes.cls.tolist():
@@ -64,50 +57,34 @@ def _diagnose_calibration_set(
     total_det = sum(class_counts.values())
     sorted_counts = dict(sorted(class_counts.items(), key=lambda x: -x[1]))
 
-    logger.info(
-        "Calibration diagnosis: %d images sampled, %d with detections, %d total objects",
-        len(images), images_with_detections, total_det,
-    )
+    logger.info("Calibration diagnosis: %d images sampled, %d with detections, %d total objects", len(images),
+                images_with_detections, total_det, )
     for cls_name, cnt in sorted_counts.items():
         logger.info("  %-20s %5d detections", cls_name, cnt)
 
-    # NOTE: this set is DIAGNOSTIC ONLY -- it does NOT influence what the
+    # NOTE: this set is DIAGNOSTIC ONLY -- it does not influence what the
     # model detects.  COCO covers vehicles, pedestrians, traffic lights,
     # stop signs, but NOT traffic cones, road panels, markings, barriers.
-    expected_common = {
-        # Vulnerable road users
-        "person", "bicycle", "motorcycle",
-        # Vehicles
-        "car", "bus", "truck",
-        # Road infrastructure (COCO subset)
-        "traffic light", "stop sign",
-    }
+    expected_common = {  # Vulnerable road users
+        "person", "bicycle", "motorcycle",  # Vehicles
+        "car", "bus", "truck",  # Road infrastructure (COCO subset)
+        "traffic light", "stop sign", }
     known_names = set(model.names.values())
     missing = (expected_common & known_names) - set(class_counts.keys())
     if missing:
-        logger.warning(
-            "Classes missing from calibration set: %s -- "
-            "the INT8 model may have poor accuracy on these objects. "
-            "Add videos containing these classes or increase --cal-frames.",
-            ", ".join(sorted(missing)),
-        )
+        logger.warning("Classes missing from calibration set: %s -- "
+                       "the INT8 model may have poor accuracy on these objects. "
+                       "Add videos containing these classes or increase --cal-frames.", ", ".join(sorted(missing)), )
 
     empty_pct = 100 * (1 - images_with_detections / len(images)) if images else 0
     if empty_pct > 60:
-        logger.warning(
-            "%.0f%% of calibration frames contain no detections -- "
-            "too many empty frames dilute activation ranges. "
-            "Try videos with more visible objects.",
-            empty_pct,
-        )
+        logger.warning("%.0f%% of calibration frames contain no detections -- "
+                       "too many empty frames dilute activation ranges. "
+                       "Try videos with more visible objects.", empty_pct, )
 
-    return {
-        "images_sampled": len(images),
-        "images_with_detections": images_with_detections,
-        "total_detections": total_det,
-        "class_counts": sorted_counts,
-        "missing_expected_classes": sorted(missing) if missing else [],
-    }
+    return {"images_sampled": len(images), "images_with_detections": images_with_detections,
+            "total_detections": total_det, "class_counts": sorted_counts,
+            "missing_expected_classes": sorted(missing) if missing else [], }
 
 
 def _read_model_names(output_dir: Path, weights: Path | None = None) -> dict[int, str]:
@@ -134,10 +111,7 @@ def _read_model_names(output_dir: Path, weights: Path | None = None) -> dict[int
         try:
             model = YOLO(str(weights))
             if hasattr(model, "names") and model.names:
-                logger.info(
-                    "Read %d class names from PT model (metadata.yaml not yet created)",
-                    len(model.names),
-                )
+                logger.info("Read %d class names from PT model (metadata.yaml not yet created)", len(model.names), )
                 return dict(model.names)
         except Exception as exc:
             logger.warning("Could not read class names from %s: %s", weights, exc)
@@ -145,11 +119,7 @@ def _read_model_names(output_dir: Path, weights: Path | None = None) -> dict[int
     return {0: "object"}
 
 
-def _extract_calibration_frames(
-    video_paths: list[Path],
-    output_dir: Path,
-    weights: Path | None = None,
-) -> str:
+def _extract_calibration_frames(video_paths: list[Path], output_dir: Path, weights: Path | None = None, ) -> str:
     """Extract evenly-spaced frames from domain videos for INT8 calibration.
 
     The number of frames per video is **proportional to its frame count**
@@ -196,10 +166,8 @@ def _extract_calibration_frames(
     if cal_yaml.exists():
         n_existing = len(list(cal_images.glob("*.jpg")))
         if n_existing >= expected_total:
-            logger.info(
-                "Calibration frames already present (%d >= %d) -- skip extraction",
-                n_existing, expected_total,
-            )
+            logger.info("Calibration frames already present (%d >= %d) -- skip extraction", n_existing,
+                        expected_total, )
             return str(cal_yaml)
 
     cal_images.mkdir(parents=True, exist_ok=True)
@@ -223,38 +191,59 @@ def _extract_calibration_frames(
                 saved += 1
         cap.release()
         total_saved += saved
-        logger.info(
-            "Extracted %d calibration frames from %s (%d total video frames)",
-            saved, vp.name, fc,
-        )
+        logger.info("Extracted %d calibration frames from %s (%d total video frames)", saved, vp.name, fc, )
 
     # Write Ultralytics-compatible dataset YAML
     names = _read_model_names(output_dir, weights=weights)
-    cal_data = {
-        "path": str(cal_root.resolve()),
-        "train": "images",
-        "val": "images",
-        "nc": len(names),
-        "names": names,
-    }
+    cal_data = {"path": str(cal_root.resolve()), "train": "images", "val": "images", "nc": len(names), "names": names, }
     with open(cal_yaml, "w") as f:
         yaml.dump(cal_data, f, default_flow_style=False)
 
     logger.info("Calibration dataset ready: %d images -> %s", total_saved, cal_yaml)
+
+    # ── Write YOLO labels for each extracted image ──────────────────
+    if weights is not None and weights.exists():
+        logger.info("Running YOLO model to fill label files for calibration frames...")
+        model = YOLO(str(weights))
+        image_paths = sorted(cal_images.glob("*.jpg"))
+        for img_path in image_paths:
+            label_path = cal_labels / (img_path.stem + ".txt")
+            results = model.predict(source=str(img_path), imgsz=TFLITE_IMG_SIZE, verbose=False, conf=0.25)
+            if results and results[0].boxes is not None and len(results[0].boxes):
+                h, w = cv2.imread(str(img_path)).shape[:2]
+                with open(label_path, "w") as f:
+                    for box, cls_id in zip(results[0].boxes.xyxy.tolist(), results[0].boxes.cls.tolist()):
+                        # YOLO format: class x_center y_center width height (all normalized)
+                        x1, y1, x2, y2 = box
+                        x_center = ((x1 + x2) / 2) / w
+                        y_center = ((y1 + y2) / 2) / h
+                        bw = (x2 - x1) / w
+                        bh = (y2 - y1) / h
+                        f.write(f"{int(cls_id)} {x_center:.6f} {y_center:.6f} {bw:.6f} {bh:.6f}\n")
+            else:
+                # No detections: leave file empty (already touched)
+                pass
+        logger.info("Label files filled for all calibration frames.")
+
     return str(cal_yaml)
 
 
-def calibrate(
-    weights_pt: Path,
-    output_root: Path,
-    source_paths: list[Path],
-) -> tuple[str, dict]:
+def move_calibration_npy(output_root):
+    from pathlib import Path
+    import shutil
+    for npy in Path.cwd().glob("calibration_image_sample_data_*.npy"):
+        target = output_root / npy.name
+        if npy.resolve() != target.resolve() and npy.exists():
+            shutil.move(str(npy), str(target))
+
+
+def calibrate(weights_pt: Path, output_root: Path, source_paths: list[Path], ) -> tuple[str, dict]:
     """Prepare a calibration dataset for INT8 quantization and diagnose quality."""
     cal_yaml = _extract_calibration_frames(source_paths, output_root, weights=weights_pt)
 
-    cal_diagnostic = _diagnose_calibration_set(
-        output_root / _CALIBRATION_FRAMES_DIR / "images",
-        weights_pt,
-    )
+    cal_diagnostic = _diagnose_calibration_set(output_root / _CALIBRATION_FRAMES_DIR / "images", weights_pt, )
+
+    # At the end of calibration, move calibration npy file if present
+    move_calibration_npy(output_root)
 
     return cal_yaml, cal_diagnostic

@@ -130,8 +130,9 @@ def export_tflite(model: str, output_root: Path, calibration_yaml: str, ) -> dic
     saved_model_dir = output_root / f"{model}_saved_model"
 
     model_list = {"pt": str(pt_path), "fp32": str(output_root / f"{model}_float32.tflite"),
-        "fp16": str(output_root / f"{model}_float16.tflite"), "int8_dyn": str(output_root / f"{model}_int8.tflite"),
-        "int8_full": str(output_root / f"{model}_full_integer_quant.tflite"), }
+                  "fp16": str(output_root / f"{model}_float16.tflite"),
+                  "int8_dyn": str(output_root / f"{model}_int8.tflite"),
+                  "int8_full": str(output_root / f"{model}_full_integer_quant.tflite"), }
 
     need_float = (not Path(model_list["fp32"]).exists() or not Path(model_list["fp16"]).exists())
     # A single int8=True call produces int8_dyn + int8_full via onnx2tf.
@@ -156,13 +157,13 @@ def export_tflite(model: str, output_root: Path, calibration_yaml: str, ) -> dic
                 _flatten_saved_model(saved_model_dir, output_root)
 
             if need_int8:
-                # Uses coco128 (128 diverse COCO images) for calibration.
-                # Produces all three int8 variants in one call:
-                #   _int8.tflite                = dynamic-range (weights-only int8)
-                #   _integer_quant.tflite       = integer quant (int8 + float fallback)
-                #   _full_integer_quant.tflite  = full integer  (everything int8)
-                _INT8_CAL_DATA = "coco128.yaml"
-                logger.info("Exporting TFLite int8 (dynamic + integer + full) ...")
+                # Utilise le YAML de calibration personnalisé si fourni, sinon coco128.yaml
+                if calibration_yaml and Path(calibration_yaml).exists():
+                    _INT8_CAL_DATA = calibration_yaml
+                    logger.info(f"Exporting TFLite int8 (dynamic + integer + full) with custom calibration: {_INT8_CAL_DATA}")
+                else:
+                    _INT8_CAL_DATA = "coco128.yaml"
+                    logger.info("Exporting TFLite int8 (dynamic + integer + full) with default calibration: coco128.yaml")
                 logger.info("  Calibration: %s (auto-downloaded by Ultralytics)", _INT8_CAL_DATA, )
                 try:
                     with HeartBeat("PT -> ONNX -> SavedModel -> TFLite (int8)"):
@@ -176,19 +177,11 @@ def export_tflite(model: str, output_root: Path, calibration_yaml: str, ) -> dic
         finally:
             _restore_tf_gpus(tf_gpu_state)
             logger.info("CUDA_VISIBLE_DEVICES after restore: %s  torch.cuda.device_count=%d",
-                os.environ.get("CUDA_VISIBLE_DEVICES", "<unset>"), torch.cuda.device_count(), )
+                        os.environ.get("CUDA_VISIBLE_DEVICES", "<unset>"), torch.cuda.device_count(), )
     else:
         logger.info("All TFLite variants already present -- skipping export")
 
-    # onnx2tf downloads calibration_image_sample_data_*.npy into CWD and
-    # sometimes into the saved_model directory.  Sweep both locations so
-    # the repo root stays clean.
-    for search_dir in [Path.cwd(), saved_model_dir]:
-        for leftover in search_dir.glob("calibration_image_sample_data_*"):
-            target = output_root / leftover.name
-            if leftover.resolve() != target.resolve() and leftover.exists():
-                shutil.move(str(leftover), str(target))
-                logger.info("Moved %s -> %s", leftover, target)
+    # ...existing code...
 
     # Log model sizes
     for tag, p in model_list.items():
@@ -267,7 +260,7 @@ def export_onnx_for_pwa(output_root: Path, model: str) -> tuple[Path, Path]:
     else:
         logger.info("Exporting quantized ONNX for PWA ...")
         quantization.quantize_dynamic(model_input=str(pwa_fp32), model_output=str(pwa_quant),
-            weight_type=quantization.QuantType.QUInt8, )
+                                      weight_type=quantization.QuantType.QUInt8, )
         logger.info("  PWA quant : %.1f MB  (%s)", file_size_mb(pwa_quant), pwa_quant)
 
     return pwa_fp32, pwa_quant
