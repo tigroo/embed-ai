@@ -1,4 +1,5 @@
 import math
+import os
 import time
 from pathlib import Path
 
@@ -40,9 +41,6 @@ def _benchmark_video_mode(
     logger.info(
         "[%s] model=%s  device=%s  imgsz=%d", mode_name, model_path, device, imgsz
     )
-    # Determine task type from model name
-    import os
-
     model_base = os.path.basename(model_path)
     if (
         model_base.endswith("-seg.tflite")

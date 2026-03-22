@@ -30,14 +30,6 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 logger = logging.getLogger("pwa_server")
-# Ajout d'un handler console pour stdout
-if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-    )
-    logger.addHandler(console_handler)
 
 
 def get_local_ip() -> str:
