@@ -258,13 +258,12 @@ def export_onnx_for_pwa(output_root: Path, model_fp32: str) -> tuple[Path, Path]
     Only segmentation is supported. No detection export.
     """
     from onnxruntime.quantization import QuantType, quantize_dynamic
-    import onnx.shape_inference
 
     pt_path = output_root / f"{model_fp32}.pt"
     pwa_dir = Path("docs") / "pwa" / "models"
     pwa_dir.mkdir(parents=True, exist_ok=True)
     pwa_fp32 = pwa_dir / "fp32.onnx"
-    pwa_int8 = pwa_dir / "int8.onnx"
+    pwa_quant = pwa_dir / "quant.onnx"
 
     _WEB_ONNX_OPSET = 17
     _WEBGL_BLOCKLIST = {"GatherElements", "Mod", "TopK", "Split"}
@@ -287,10 +286,16 @@ def export_onnx_for_pwa(output_root: Path, model_fp32: str) -> tuple[Path, Path]
                 "PWA ONNX not WebGL/WebGPU/WASM compatible (%s) -- re-exporting", reason,
             )
             pwa_fp32.unlink()
-            if pwa_int8.exists():
-                pwa_int8.unlink()
 
     if need_fp32:
+        if not pt_path.exists():
+            # Try to download weights automatically
+            try:
+                from export import export as ensure_pt
+            except ImportError:
+                from . import export as ensure_pt
+            logger.info(f"PT weights not found at {pt_path}, attempting download...")
+            ensure_pt(model_fp32, output_root)
         if not pt_path.exists():
             raise FileNotFoundError(f"PT weights not found at {pt_path}")
         logger.info(
@@ -298,9 +303,9 @@ def export_onnx_for_pwa(output_root: Path, model_fp32: str) -> tuple[Path, Path]
             _WEB_ONNX_OPSET,
         )
         yolo_model = YOLO(str(pt_path))
-        if hasattr(yolo_model.model, "end2end"):
-            yolo_model.model.end2end = False
-        yolo_model.export(format="onnx", opset=_WEB_ONNX_OPSET)
+        # See: https://docs.ultralytics.com/modes/export/#export-arguments
+        # Explicitly disable built-in NMS for ONNX export (end2end=False)
+        yolo_model.export(format="onnx", opset=_WEB_ONNX_OPSET, end2end=False)
         generated = pt_path.with_suffix(".onnx")
         if generated.exists():
             shutil.move(str(generated), str(pwa_fp32))
@@ -316,59 +321,28 @@ def export_onnx_for_pwa(output_root: Path, model_fp32: str) -> tuple[Path, Path]
             file_size_mb(pwa_fp32), _WEB_ONNX_OPSET, pwa_fp32,
         )
 
-    # Step 2: Export INT8 ONNX (dynamic quantization, segmentation)
-    need_int8 = True
-    if pwa_int8.exists():
+    # Step 2: Export quantized ONNX (dynamic quantization, segmentation)
+    # On ne tente plus la quantification int8 statique (Split non supporté)
+    if pwa_quant.exists():
         logger.info(
-            "PWA INT8 already present: %s (%.1f MB)",
-            pwa_int8, file_size_mb(pwa_int8),
+            "PWA quantized model already present: %s (%.1f MB)",
+            pwa_quant, file_size_mb(pwa_quant),
         )
-        need_int8 = False
-
-    if need_int8:
-        # Try opset 17 first, fallback to 13 if needed
-        for opset in (_WEB_ONNX_OPSET, 13):
-            logger.info(f"Exporting ONNX (opset {opset}, end2end=False) for PWA INT8 (segmentation) ...")
-            yolo_model = YOLO(str(pt_path))
-            if hasattr(yolo_model.model, "end2end"):
-                yolo_model.model.end2end = False
-            yolo_model.export(format="onnx", opset=opset)
-            generated = pt_path.with_suffix(".onnx")
-            if not generated.exists():
-                continue
-            # Remove Split nodes if present
-            onnx_model = onnx.load(str(generated))
-            nodes = [n for n in onnx_model.graph.node if n.op_type != "Split"]
-            if len(nodes) != len(onnx_model.graph.node):
-                logger.info("Removed Split nodes for compatibility.")
-                del onnx_model.graph.node[:]
-                onnx_model.graph.node.extend(nodes)
-                onnx.save(onnx_model, str(generated))
-            # Keep head nodes in fp32
-            head_nodes = _find_head_nodes(generated)
-            logger.info(
-                "Quantizing ONNX: backbone INT8 (dynamic), head FP32 (%d nodes excluded) ...",
-                len(head_nodes),
-            )
+    else:
+        logger.info("Exporting quantized ONNX (dynamic quantization) for PWA ...")
+        try:
             quantize_dynamic(
-                model_input=str(generated),
-                model_output=str(pwa_int8),
+                model_input=str(pwa_fp32),
+                model_output=str(pwa_quant),
                 weight_type=QuantType.QUInt8,
-                nodes_to_exclude=head_nodes,
             )
-            logger.info("  PWA INT8 : %.1f MB  (%s)", file_size_mb(pwa_int8), pwa_int8)
-            generated.unlink()
-            # Check compatibility
-            ops = _get_onnx_ops(pwa_int8)
-            bad = _WEBGL_BLOCKLIST & ops
-            if not bad:
-                logger.info("PWA INT8 is WASM compatible (no blocklisted ops)")
-                break
-            else:
-                logger.warning(f"PWA INT8 has blocklisted ops: {bad}, trying fallback opset if available.")
-                pwa_int8.unlink(missing_ok=True)
+            logger.info("  PWA quant : %.1f MB  (%s)", file_size_mb(pwa_quant), pwa_quant)
+        except Exception as e:
+            logger.warning(f"Quantization failed for PWA quantized model: {e}")
+            if pwa_quant.exists():
+                pwa_quant.unlink(missing_ok=True)
 
-    return pwa_fp32, pwa_int8
+    return pwa_fp32, pwa_quant
 
 
 def _find_head_nodes(onnx_path: Path) -> list[str]:

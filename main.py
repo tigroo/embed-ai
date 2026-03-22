@@ -66,7 +66,7 @@ def run(model: str, output_dir: str, summary_file: str, pwa_only: bool = False):
     output_root.mkdir(parents=True, exist_ok=True)
 
     if pwa_only:
-        export.export_onnx_for_pwa(output_root, model_fp32="yolo26n-seg", model_int8="")
+        export.export_onnx_for_pwa(output_root, model_fp32="yolo26n-seg")
         logger.info("PWA ONNX export done: fp32 (seg) only")
         return
 
@@ -101,7 +101,7 @@ def run(model: str, output_dir: str, summary_file: str, pwa_only: bool = False):
     )
 
     # ── Build ONNX variants for PWA (directly in docs/pwa/models/) ──
-    export.export_onnx_for_pwa(output_root, model_fp32="yolo26n-seg", model_int8="")
+    export.export_onnx_for_pwa(output_root, model_fp32="yolo26n-seg")
 
     # ── Model accuracy evaluation (mAP) ──────────────────────────────
     eval_cache = output_root / "eval_cache.json"

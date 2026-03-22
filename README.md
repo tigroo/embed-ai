@@ -1,6 +1,6 @@
 # embed-ai
 
-> A hands-on demo: take a YOLO v26 detection model, shrink it from
+> A hands-on demo: take a YOLO v26 segmentation model, shrink it from
 > 10 MB to 3 MB, measure what breaks, and run it live on a phone.
 
 ---
@@ -71,20 +71,6 @@
   ┌───────────────────────────────────────────────────────────────────┐
   │ Step 3  tflite                                                    │
   │ Under the hood: .pt → ONNX → SavedModel → onnx2tf → .tflite       │
-  │    Call 1: format="tflite"                                        │
-  │     → yolo26n_float32.tflite  (~10 MB)                            │
-  │     → yolo26n_float16.tflite  (~5 MB)                             │
-  │   Call 2: format="tflite", int8=True, data="coco128.yaml"         │
-  │     → yolo26n_int8.tflite             (~3 MB) — dynamic-range     │
-  │     → yolo26n_full_integer_quant.tflite (~3 MB) — full int8       │
-  └────────────────────────────────┬──────────────────────────────────┘
-                                   │
-                                   ▼
-  ┌───────────────────────────────────────────────────────────────────┐
-  │ Step 4  pwa                                                       │
-  │ Export ONNX at opset 17, end2end=False, no built-in NMS           │
-  │ Quantize backbone to INT8, keep detection head FP32.              │
-  │ These models are WebGL-compatible (no GatherElements/Mod/TopK).   │
   └────────────────────────────────┬──────────────────────────────────┘
                                    │
                                    ▼
@@ -107,11 +93,15 @@
   │   sources, artifacts (sizes), evaluation (mAP), benchmarks (FPS), │
   │   calibration report, GPU info.                                   │
   └───────────────────────────────────────────────────────────────────┘
+
+
+
+
 ```
 
 ---
 
-## Slide 3 — The Conversion Pipeline in Detail
+## Conversion
 
 ```
   yolo26n.pt                          PyTorch weights
@@ -132,8 +122,8 @@
        └──── Ultralytics export(format="onnx", opset=17) ──────────────┘
              + onnxruntime quantize_dynamic
              → yolo26n_fp32.onnx              ~10 MB  (PWA full)
-             → yolo26n_int8.onnx              ~3.5 MB (PWA mixed)
-                backbone INT8 / head FP32
+             → yolo26n_quant.onnx             ~4 MB (PWA quantized)
+                backbone quantized (dynamic) / head FP32
                 (nodes_to_exclude = /model.23/*)
 ```
 
@@ -282,7 +272,23 @@
 
 ---
 
-## Slide 11 — PWA: Live Detection on a Phone
+## Progressive Web App (PWA)
+
+  ┌───────────────────────────────────────────────────────────────────┐
+  │ Step 1  export                                                    │
+  │ Download yolo26n.onnx.
+  │ opset 17, end2end=False, no built-in NMS 
+  └────────────────────────────────┬──────────────────────────────────┘
+                                   │
+                                   ▼
+  ┌───────────────────────────────────────────────────────────────────┐
+  │ Step 2  pwa                                                       │
+  │ Export ONNX at opset 17, end2end=False, no built-in NMS           │
+  │ Quantize backbone to INT8, keep detection head FP32.              │
+  │ These models are WebGL-compatible (no GatherElements/Mod/TopK).   │
+  └────────────────────────────────┬──────────────────────────────────┘
+                                   │
+                                   ▼
 
 <p align="center">
   <img src="docs/pwa/qr.svg" alt="QR code" width="200" /><br/>
@@ -370,7 +376,7 @@ output/
 
 docs/pwa/models/
   yolo26n_fp32.onnx             ← PWA FP32 model
-  yolo26n_int8.onnx             ← PWA INT8 model
+  yolo26n_quant.onnx            ← PWA quantized model
 ```
 
 ---
@@ -386,7 +392,7 @@ python serve_local.py
 # Output:
 #   PWA local server running
 #   https://192.168.1.42:8443/pwa/
-#   Models: yolo26n_fp32.onnx (9.5 MB), yolo26n_int8.onnx (3.1 MB)
+#   Models: yolo26n_fp32.onnx (9.5 MB), yolo26n_quant.onnx (4 MB)
 #
 #   Open this URL on your phone (same WiFi).
 #   Accept the security warning (self-signed cert).
@@ -406,3 +412,9 @@ git add -A && git commit -m "pipeline run" && git push
 
 # 4. Share the QR code or URL above.
 ```
+
+## PWA quantized ONNX model
+
+Due to Split operators in the segmentation graph, static int8 quantization is not possible for ONNX. Only dynamic quantization is used for the PWA quantized model, which reduces file size but not as much as TFLite int8.
+
+The PWA "Quantized" model (quant.onnx, ~4 MB) uses ONNX dynamic quantization. Full integer quantization is not supported for segmentation models due to Split operators in the graph.

@@ -39,7 +39,7 @@ const _inputBuf = new Float32Array(3 * INPUT_SIZE * INPUT_SIZE);
 
 const MODEL_META = {
   fp32: { path: "models/fp32.onnx", size: "~11 MB", label: "FP32" },
-  int8: { path: "models/int8.onnx", size: "~4 MB",  label: "INT8" },
+  quant: { path: "models/quant.onnx", size: "~4 MB",  label: "Quantized" },
 };
 
 /**
@@ -65,7 +65,7 @@ function disposeTensor(t) {
 
 /**
  * Load (or switch) the ONNX model.
- * @param {"fp32"|"int8"} variant
+ * @param {"fp32"|"quant"} variant
  */
 export async function loadModel(variant) {
 
@@ -86,7 +86,7 @@ export async function loadModel(variant) {
   }
 
   let candidates;
-  if (variant === "int8") {
+  if (variant === "quant") {
     candidates = ["wasm"];
     console.log("[detector] INT8: forcing WASM backend only");
     logToServer("[detector] INT8: forcing WASM backend only");
@@ -98,7 +98,7 @@ export async function loadModel(variant) {
   logToServer(`[detector] Candidates for variant='${variant}': [${candidates}]`);
 
   // ...existing code...
-  if (variant === "int8" && (candidates.length !== 1 || candidates[0] !== "wasm")) {
+  if (variant === "quant" && (candidates.length !== 1 || candidates[0] !== "wasm")) {
     const msg = `[detector] ERROR: INT8 candidates not strictly WASM: [${candidates}]`;
     console.error(msg);
     logToServer(msg);
@@ -130,7 +130,7 @@ export async function loadModel(variant) {
       session = s;
       currentModel = variant;
       activeBackend = provider;
-      if (variant === "int8" && provider !== "wasm") {
+      if (variant === "quant" && provider !== "wasm") {
         const msg = `[detector] ERROR: INT8 model loaded on non-WASM backend: ${provider}`;
         console.error(msg);
         logToServer(msg);
