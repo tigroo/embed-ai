@@ -116,50 +116,35 @@ Two recommended builds for any embedding project:
 
 [Yolo tasks and modes](https://docs.ultralytics.com/models/yolo26/#supported-tasks-and-modes)
 
-```
-  Model           Params    PT size   ONNX FP32   Best for
-  ─────────────── ────────  ────────  ──────────  ──────────────────────────────────────────────
-  yolo26n-seg     2.7 M      6 MB     11 MB       pixel masks (visual!)
-  yolo26s-seg     9.7 M     20 MB     39 MB       best int8 accuracy
-  yolo26m-seg    21.2 M     44 MB     85 MB       production accuracy
-  yolo26l-seg    47.0 M     97 MB    187 MB       large objects, high accuracy
-  yolo26x-seg    99.1 M    205 MB    395 MB       highest accuracy, very heavy
-```
+**Segmentation models:**
+
+| Model       | Params | PT size | ONNX FP32 | Best for                     |
+|-------------|--------|---------|-----------|------------------------------|
+| yolo26n-seg | 2.7 M  | 6 MB    | 11 MB     | demonstrator                 |
+| yolo26s-seg | 9.7 M  | 20 MB   | 39 MB     | best int8 accuracy           |
+| yolo26m-seg | 21.2 M | 44 MB   | 85 MB     | production accuracy          |
+| yolo26l-seg | 47.0 M | 97 MB   | 187 MB    | large objects, high accuracy |
+| yolo26x-seg | 99.1 M | 205 MB  | 395 MB    | highest accuracy, very heavy |
 
 ```
-  yolo26n.pt                          PyTorch weights
+      *.pt                          PyTorch weights
        │
        │  Ultralytics model.export(format="tflite")
        ▼
-  yolo26n.onnx ◄──────────────────── ONNX intermediate (FP32, ~10 MB)
-       │                              Upcast: FP16 → FP32 (weights double)
+     *.onnx ◄──────────────────── ONNX intermediate (FP32)
        │
        ├──── onnx2tf (float) ──────────────────────────────────────────┐
-       │     yolo26n_float32.tflite  ~10 MB  (full precision)          │
-       │     yolo26n_float16.tflite   ~5 MB  (half precision)          │
+       │     *_float32.tflite  ~10 MB  (full precision)                │
+       │     *_float16.tflite   ~5 MB  (half precision)                │
        │                                                               │
        ├──── onnx2tf (int8=True, calibrated on coco128) ───────────────┤
-       │     yolo26n_int8.tflite               ~3 MB  (dynamic-range)  │
-       │     yolo26n_full_integer_quant.tflite  ~3 MB  (full int8)     │
+       │     *_int8.tflite               ~3 MB  (dynamic-range)        │
+       │     *_full_integer_quant.tflite  ~3 MB  (full int8)           │
        │                                                               │
-       └──── Ultralytics export(format="onnx", opset=17) ──────────────┘
-             + onnxruntime quantize_dynamic
-             → yolo26n_fp32.onnx              ~10 MB  (PWA full)
-             → yolo26n_quant.onnx             ~4 MB (PWA quantized)
-                backbone quantized (dynamic) / head FP32
-                (nodes_to_exclude = /model.23/*)
+       └───────────────────────────────────────────────────────────────┘            
 ```
 
-**General LiteRT conversion path:**
-
-```
-  Train → Export (ONNX) → Graph optimizations → Convert → .tflite
-    → Post-process (FP16 / INT8 / prune) → Validate (mAP) → Deploy
-```
-
----
-
-## Optimization Techniques Used
+### Optimization
 
 | Technique              | What it does                                               |
 |------------------------|------------------------------------------------------------|
@@ -176,16 +161,15 @@ Two recommended builds for any embedding project:
 | QAT (Quantization-Aware Training) | Needs retraining; out of scope  |
 | Pruning / Clustering              | More useful on larger models    |
 | Edge TPU / NNAPI delegates        | Desktop demo, not mobile native |
+| Split suppressions (WebGL)        | WebGL-compatible ONNX export    |
 
-> The real reduction comes from **quantisation within TFLite**:
-> FP32 (10 MB) → FP16 (5 MB) → INT8 (3 MB).
+The real reduction comes from **quantisation within TFLite**:
+FP32 (10 MB) → FP16 (5 MB) → INT8 (3 MB).
 
-> **int8_dyn** stores weights as int8 but dequantizes to FP32 at
-> runtime. Same file size as int8_full, detection works.
->
-> **int8_full** forces everything to int8 — the detection head
-> confidence scores are crushed.  **Kept as a demo of what goes
-> wrong** when you blindly quantise without QAT.
+**int8_dyn** stores weights as int8 but dequantizes to FP32 at runtime.
+
+**int8_full** forces everything to int8 — the detection head confidence scores are crushed.  
+**Kept as a demo of what goes wrong** when you blindly quantise without tree analysis.
 >
 > **onnx_int8** (used in the PWA) explicitly excludes `/model.23/*`
 > from quantisation via `nodes_to_exclude`. Backbone is calibrated

@@ -37,14 +37,12 @@ def _resolve_source(source: str) -> str:
 
 
 def run(model: str, output_dir: str, summary_file: str, pwa_only: bool = False):
-    """Export, calibrate, evaluate mAP, and benchmark all videos, ou juste export PWA si pwa_only."""
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
 
     if pwa_only:
-        export.export_onnx_for_pwa(output_root, model_fp32="yolo26n-seg")
+        export.export_onnx_for_pwa(output_root, model=model)
     else:
-
         torch_gpu_ok = torch.cuda.is_available()
 
         # ── Auto-discover videos ─────────────────────────────────────────
@@ -60,18 +58,18 @@ def run(model: str, output_dir: str, summary_file: str, pwa_only: bool = False):
             logger.info("  - %s", s)
         logger.info("=" * 95)
 
-        # ── Export the model (.pt download) ──────────────────────────────
+        # ── Export the model ──────────────────────────────
         weights_pt = export.export(model, output_root)
 
-        # ── Calibration frames from domain videos ────────────────────────
+        # ── Calibrate frames from domain videos ────────────────────────
         cal_yaml, cal_diagnostic = calibration.calibrate(weights_pt=weights_pt, output_root=output_root,
             source_paths=source_paths, )
 
         # ── Build TFLite variants ────────────────────────────────────────
         model_list = export.export_tflite(model, output_root, calibration_yaml=cal_yaml, )
 
-        # ── Build ONNX variants for PWA (directly in docs/pwa/models/) ──
-        export.export_onnx_for_pwa(output_root, model_fp32="yolo26n-seg")
+        # ── Build ONNX variants for PWA  ──
+        export.export_onnx_for_pwa(output_root, model=model)
 
         # ── Model accuracy evaluation (mAP) ──────────────────────────────
         eval_cache = output_root / "eval_cache.json"

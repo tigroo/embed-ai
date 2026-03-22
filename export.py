@@ -224,14 +224,14 @@ def _get_onnx_ops(onnx_path: Path) -> set[str]:
 _WEB_ONNX_OPSET = 17
 
 
-def export_onnx_for_pwa(output_root: Path, model_fp32: str) -> tuple[Path, Path]:
+def export_onnx_for_pwa(output_root: Path, model: str) -> tuple[Path, Path]:
     """Export a segmentation ONNX model for PWA:
     - fp32.onnx from model_fp32.pt (segmentation, opset 17, for WebGL/WebGPU/WASM)
     - int8.onnx from model_fp32.pt (dynamic quantisation, opset 17 or 13, for WASM)
     Only segmentation is supported. No detection export.
     """
 
-    pt_path = output_root / f"{model_fp32}.pt"
+    pt_path = output_root / f"{model}.pt"
     pwa_dir = Path("docs") / "pwa" / "models"
     pwa_dir.mkdir(parents=True, exist_ok=True)
     pwa_fp32 = pwa_dir / "fp32.onnx"
