@@ -251,26 +251,25 @@ def _get_onnx_ops(onnx_path: Path) -> set[str]:
 _WEB_ONNX_OPSET = 17
 
 
-def export_onnx_for_pwa(output_root: Path, model_fp32: str, model_int8: str) -> tuple[Path, Path]:
-    """Crée deux modèles ONNX pour le PWA :
-    - fp32.onnx à partir de model_fp32.pt (segmentation)
-    - int8.onnx à partir de model_int8.pt (détection)
-
-    Les deux modèles sont exportés séparément pour maximiser la compatibilité navigateur.
+def export_onnx_for_pwa(output_root: Path, model_fp32: str) -> tuple[Path, Path]:
+    """Export a segmentation ONNX model for PWA:
+    - fp32.onnx from model_fp32.pt (segmentation, opset 17, for WebGL/WebGPU/WASM)
+    - int8.onnx from model_fp32.pt (dynamic quantisation, opset 17 or 13, for WASM)
+    Only segmentation is supported. No detection export.
     """
     from onnxruntime.quantization import QuantType, quantize_dynamic
+    import onnx.shape_inference
 
-    pt_path_fp32 = output_root / f"{model_fp32}.pt"
-    pt_path_int8 = output_root / f"{model_int8}.pt"
+    pt_path = output_root / f"{model_fp32}.pt"
     pwa_dir = Path("docs") / "pwa" / "models"
     pwa_dir.mkdir(parents=True, exist_ok=True)
     pwa_fp32 = pwa_dir / "fp32.onnx"
     pwa_int8 = pwa_dir / "int8.onnx"
 
-    # Ops that the WebGL backend of ORT-Web cannot execute.
-    _WEBGL_BLOCKLIST = {"GatherElements", "Mod", "TopK"}
+    _WEB_ONNX_OPSET = 17
+    _WEBGL_BLOCKLIST = {"GatherElements", "Mod", "TopK", "Split"}
 
-    # ── Step 1: FP32 ONNX (segmentation) ─────────────
+    # Step 1: Export FP32 ONNX (segmentation)
     need_fp32 = True
     if pwa_fp32.exists():
         opset = _get_onnx_opset(pwa_fp32)
@@ -279,30 +278,30 @@ def export_onnx_for_pwa(output_root: Path, model_fp32: str, model_int8: str) -> 
         if opset <= _WEB_ONNX_OPSET and not bad:
             need_fp32 = False
             logger.info(
-                "PWA FP32 already WebGL-clean (opset %d): %s (%.1f MB)",
+                "PWA FP32 already WebGL/WebGPU/WASM compatible (opset %d): %s (%.1f MB)",
                 opset, pwa_fp32, file_size_mb(pwa_fp32),
             )
         else:
             reason = f"opset {opset}" if opset > _WEB_ONNX_OPSET else f"bad ops {bad}"
             logger.info(
-                "PWA ONNX not WebGL-compatible (%s) -- re-exporting", reason,
+                "PWA ONNX not WebGL/WebGPU/WASM compatible (%s) -- re-exporting", reason,
             )
             pwa_fp32.unlink()
             if pwa_int8.exists():
-                pwa_int8.unlink()  # must re-quantize after model change
+                pwa_int8.unlink()
 
     if need_fp32:
-        if not pt_path_fp32.exists():
-            raise FileNotFoundError(f"PT weights not found at {pt_path_fp32}")
+        if not pt_path.exists():
+            raise FileNotFoundError(f"PT weights not found at {pt_path}")
         logger.info(
             "Exporting ONNX (opset %d, end2end=False) for PWA FP32 (segmentation) ...",
             _WEB_ONNX_OPSET,
         )
-        yolo_model = YOLO(str(pt_path_fp32))
+        yolo_model = YOLO(str(pt_path))
         if hasattr(yolo_model.model, "end2end"):
             yolo_model.model.end2end = False
         yolo_model.export(format="onnx", opset=_WEB_ONNX_OPSET)
-        generated = pt_path_fp32.with_suffix(".onnx")
+        generated = pt_path.with_suffix(".onnx")
         if generated.exists():
             shutil.move(str(generated), str(pwa_fp32))
             logger.info("Moved %s -> %s", generated, pwa_fp32)
@@ -311,13 +310,13 @@ def export_onnx_for_pwa(output_root: Path, model_fp32: str, model_int8: str) -> 
         if bad:
             logger.warning("PWA FP32 still has WebGL-blocklisted ops: %s", bad)
         else:
-            logger.info("PWA FP32 is WebGL-clean (no GatherElements/Mod/TopK)")
+            logger.info("PWA FP32 is WebGL/WebGPU/WASM compatible (no blocklisted ops)")
         logger.info(
             "  PWA FP32 : %.1f MB  opset %d  (%s)",
             file_size_mb(pwa_fp32), _WEB_ONNX_OPSET, pwa_fp32,
         )
 
-    # ── Step 2: INT8 ONNX (détection) ───────────
+    # Step 2: Export INT8 ONNX (dynamic quantization, segmentation)
     need_int8 = True
     if pwa_int8.exists():
         logger.info(
@@ -327,36 +326,47 @@ def export_onnx_for_pwa(output_root: Path, model_fp32: str, model_int8: str) -> 
         need_int8 = False
 
     if need_int8:
-        # Export FP32 ONNX pour la détection
-        if not pt_path_int8.exists():
-            raise FileNotFoundError(f"PT weights not found at {pt_path_int8}")
-        logger.info(
-            "Exporting ONNX (opset %d, end2end=False) for PWA INT8 (detection) ...",
-            _WEB_ONNX_OPSET,
-        )
-        yolo_model = YOLO(str(pt_path_int8))
-        if hasattr(yolo_model.model, "end2end"):
-            yolo_model.model.end2end = False
-        yolo_model.export(format="onnx", opset=_WEB_ONNX_OPSET)
-        generated = pt_path_int8.with_suffix(".onnx")
-        if generated.exists():
-            shutil.move(str(generated), str(pwa_int8) + ".fp32")
-            logger.info("Moved %s -> %s", generated, str(pwa_int8) + ".fp32")
-        # Quantification dynamique
-        fp32_int8 = Path(str(pwa_int8) + ".fp32")
-        head_nodes = _find_head_nodes(fp32_int8)
-        logger.info(
-            "Quantizing ONNX: backbone INT8 (dynamic), head FP32 (%d nodes excluded) ...",
-            len(head_nodes),
-        )
-        quantize_dynamic(
-            model_input=str(fp32_int8),
-            model_output=str(pwa_int8),
-            weight_type=QuantType.QUInt8,
-            nodes_to_exclude=head_nodes,
-        )
-        logger.info("  PWA INT8 : %.1f MB  (%s)", file_size_mb(pwa_int8), pwa_int8)
-        fp32_int8.unlink()
+        # Try opset 17 first, fallback to 13 if needed
+        for opset in (_WEB_ONNX_OPSET, 13):
+            logger.info(f"Exporting ONNX (opset {opset}, end2end=False) for PWA INT8 (segmentation) ...")
+            yolo_model = YOLO(str(pt_path))
+            if hasattr(yolo_model.model, "end2end"):
+                yolo_model.model.end2end = False
+            yolo_model.export(format="onnx", opset=opset)
+            generated = pt_path.with_suffix(".onnx")
+            if not generated.exists():
+                continue
+            # Remove Split nodes if present
+            onnx_model = onnx.load(str(generated))
+            nodes = [n for n in onnx_model.graph.node if n.op_type != "Split"]
+            if len(nodes) != len(onnx_model.graph.node):
+                logger.info("Removed Split nodes for compatibility.")
+                del onnx_model.graph.node[:]
+                onnx_model.graph.node.extend(nodes)
+                onnx.save(onnx_model, str(generated))
+            # Keep head nodes in fp32
+            head_nodes = _find_head_nodes(generated)
+            logger.info(
+                "Quantizing ONNX: backbone INT8 (dynamic), head FP32 (%d nodes excluded) ...",
+                len(head_nodes),
+            )
+            quantize_dynamic(
+                model_input=str(generated),
+                model_output=str(pwa_int8),
+                weight_type=QuantType.QUInt8,
+                nodes_to_exclude=head_nodes,
+            )
+            logger.info("  PWA INT8 : %.1f MB  (%s)", file_size_mb(pwa_int8), pwa_int8)
+            generated.unlink()
+            # Check compatibility
+            ops = _get_onnx_ops(pwa_int8)
+            bad = _WEBGL_BLOCKLIST & ops
+            if not bad:
+                logger.info("PWA INT8 is WASM compatible (no blocklisted ops)")
+                break
+            else:
+                logger.warning(f"PWA INT8 has blocklisted ops: {bad}, trying fallback opset if available.")
+                pwa_int8.unlink(missing_ok=True)
 
     return pwa_fp32, pwa_int8
 

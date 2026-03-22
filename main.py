@@ -22,6 +22,7 @@ os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")  # silence oneDNN info
 # Interpreter`; if that fails it falls back to `import tensorflow` (noisy).
 # We register ai_edge_litert *as* tflite_runtime to avoid touching TF at
 # inference time entirely.
+_litert_interp = None
 try:
     from ai_edge_litert import interpreter as _litert_interp
 
@@ -59,10 +60,15 @@ def _resolve_source(source: str) -> str:
     raise FileNotFoundError(f"Video source not found: {source}")
 
 
-def run(model: str, output_dir: str, summary_file: str):
-    """Export, calibrate, evaluate mAP, and benchmark all videos."""
+def run(model: str, output_dir: str, summary_file: str, pwa_only: bool = False):
+    """Export, calibrate, evaluate mAP, and benchmark all videos, ou juste export PWA si pwa_only."""
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
+
+    if pwa_only:
+        export.export_onnx_for_pwa(output_root, model_fp32="yolo26n-seg", model_int8="")
+        logger.info("PWA ONNX export done: fp32 (seg) only")
+        return
 
     torch_gpu_ok = torch.cuda.is_available()
 
@@ -95,7 +101,7 @@ def run(model: str, output_dir: str, summary_file: str):
     )
 
     # ── Build ONNX variants for PWA (directly in docs/pwa/models/) ──
-    export.export_onnx_for_pwa(output_root, model_fp32="yolo26n-seg", model_int8="yolo26n")
+    export.export_onnx_for_pwa(output_root, model_fp32="yolo26n-seg", model_int8="")
 
     # ── Model accuracy evaluation (mAP) ──────────────────────────────
     eval_cache = output_root / "eval_cache.json"
@@ -139,21 +145,6 @@ def run(model: str, output_dir: str, summary_file: str):
     )
 
 
-def run_pwa_only(output_dir: str):
-    """Export uniquement les modèles ONNX pour le PWA :
-    - fp32.onnx (segmentation, yolo26n-seg)
-    - int8.onnx (détection, yolo26n)
-    """
-    output_root = Path(output_dir)
-    output_root.mkdir(parents=True, exist_ok=True)
-    # On suppose que les .pt existent déjà dans output/ ou sont téléchargés par export.export
-    # On force l'export des deux .pt si besoin
-    export.export("yolo26n-seg", output_root)
-    export.export("yolo26n", output_root)
-    export.export_onnx_for_pwa(output_root, model_fp32="yolo26n-seg", model_int8="yolo26n")
-    logger.info("PWA ONNX export done: fp32 (seg), int8 (detect)")
-
-
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
@@ -166,10 +157,12 @@ if __name__ == "__main__":
     parser.add_argument("--output", default="output", help="Output directory")
     parser.add_argument("--model", default="yolo26n-seg", help="Model name")
     parser.add_argument("--summary", default="summary.json", help="Summary JSON filename")
-    parser.add_argument("--pwa-only", action="store_true", help="Export only ONNX models for PWA (seg fp32, detect int8)")
+    parser.add_argument("--pwa-only", action="store_true", help="Export only ONNX model for PWA (seg fp32)")
     args = parser.parse_args()
 
-    if args.pwa_only:
-        run_pwa_only(output_dir=args.output)
-    else:
-        run(output_dir=args.output, model=args.model, summary_file=args.summary)
+    run(
+        model=args.model,
+        output_dir=args.output,
+        summary_file=args.summary,
+        pwa_only=args.pwa_only,
+    )
