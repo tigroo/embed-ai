@@ -27,14 +27,16 @@ import tempfile
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
-    stream=sys.stdout
+    stream=sys.stdout,
 )
 logger = logging.getLogger("pwa_server")
 # Ajout d'un handler console pour stdout
 if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    console_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    )
     logger.addHandler(console_handler)
 
 
@@ -46,21 +48,32 @@ def get_local_ip() -> str:
         ip = s.getsockname()[0]
         s.close()
         return ip
-    except Exception:
+    except OSError:
         return "127.0.0.1"
 
 
 def generate_self_signed_cert(certfile: str, keyfile: str) -> None:
     """Generate a temporary self-signed cert valid for 1 day."""
-    subprocess.check_call([
-        "openssl", "req", "-x509",
-        "-newkey", "rsa:2048",
-        "-keyout", keyfile,
-        "-out", certfile,
-        "-days", "1",
-        "-nodes",
-        "-subj", "/CN=embed-ai-local",
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.check_call(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-keyout",
+            keyfile,
+            "-out",
+            certfile,
+            "-days",
+            "1",
+            "-nodes",
+            "-subj",
+            "/CN=embed-ai-local",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 class LoggingHandler(http.server.SimpleHTTPRequestHandler):
@@ -91,14 +104,14 @@ class LoggingHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == "/log_backend":
-            content_length = int(self.headers.get('Content-Length', 0))
+            content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length).decode("utf-8")
             logger.info(f"BACKEND_LOG: {body}")
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"ok")
         elif self.path == "/log_js":
-            content_length = int(self.headers.get('Content-Length', 0))
+            content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length).decode("utf-8")
             logger.info(f"JS_LOG: {body}")
             self.send_response(200)
@@ -129,7 +142,7 @@ def main():
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(cert, key)
 
-    server = http.server.HTTPServer(("0.0.0.0", port), LoggingHandler)
+    server = http.server.HTTPServer(("0.0.0.0", port), LoggingHandler) # type: ignore[arg-type]
     server.socket = ctx.wrap_socket(server.socket, server_side=True)
 
     # List what we will serve
@@ -146,7 +159,9 @@ def main():
     logger.info("PWA local server running")
     logger.info(f"https://{ip}:{port}/pwa/")
     logger.info(f"Models: {model_info}")
-    logger.info("Open this URL on your phone (same WiFi). Accept the security warning (self-signed cert).")
+    logger.info(
+        "Open this URL on your phone (same WiFi). Accept the security warning (self-signed cert)."
+    )
 
     try:
         server.serve_forever()
@@ -156,4 +171,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

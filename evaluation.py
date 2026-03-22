@@ -8,12 +8,6 @@ _EVAL_DATA = "coco8.yaml"
 
 
 def evaluate(model_list: dict[str, str], runs_dir: Path | None = None) -> list[dict]:
-    """Evaluate exported models on the given dataset and return metrics.
-
-    If *runs_dir* is given, Ultralytics validation artifacts (confusion
-    matrices, sample predictions) are stored under ``runs_dir/<tag>/``
-    instead of the default ``runs/detect/valN``.
-    """
     results: list[dict] = []
     for tag, model_path in model_list.items():
         p = Path(model_path)
@@ -58,7 +52,9 @@ def evaluate(model_list: dict[str, str], runs_dir: Path | None = None) -> list[d
         if entry.get("mAP50") is not None:
             logger.info(
                 "  -> mAP50=%.4f  mAP50-95=%.4f  P=%.4f  R=%.4f",
-                entry["mAP50"], entry["mAP50_95"],
-                entry["precision"], entry["recall"],
+                entry["mAP50"],
+                entry["mAP50_95"],
+                entry["precision"],
+                entry["recall"],
             )
     return results

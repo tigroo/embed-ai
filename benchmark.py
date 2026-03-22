@@ -19,31 +19,65 @@ def _build_video_writer(video_path: Path, fallback_fps: float = 30.0):
         raise ValueError(f"Cannot read video dimensions from {video_path}")
     if fps <= 0:
         fps = fallback_fps
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore[attr-defined]
     return width, height, fps, fourcc, total
 
 
-def _video_output_name(source: str, mode: str) -> str:
-    return f"{Path(source).stem}_predicted_{mode}.mp4"
+def _video_output_name(source: str, model_stem: str, device: str) -> str:
+    # ex: bad_road_v1_predicted_yolo26n_float32_tflite_cpu.mp4
+    return f"{Path(source).stem}_predicted_{model_stem}_{device}.mp4"
 
 
-def _benchmark_video_mode(mode_name: str, model_path: str, source: str, output_video_path: Path, imgsz: int,
-                          device, max_frames: int = 0) -> dict:
-    logger.info("[%s] model=%s  device=%s  imgsz=%d", mode_name, model_path, device, imgsz)
-    model = YOLO(model_path)
+def _benchmark_video_mode(
+    mode_name: str,
+    model_path: str,
+    source: str,
+    output_video_path: Path,
+    imgsz: int,
+    device,
+    max_frames: int = 0,
+) -> dict:
+    logger.info(
+        "[%s] model=%s  device=%s  imgsz=%d", mode_name, model_path, device, imgsz
+    )
+    # Determine task type from model name
+    import os
+
+    model_base = os.path.basename(model_path)
+    if (
+        model_base.endswith("-seg.tflite")
+        or model_base.endswith("-seg.pt")
+        or model_base.endswith("-seg.onnx")
+        or model_base.endswith("-seg")
+    ):
+        task_type = "segment"
+    else:
+        task_type = "detect"
+    model = YOLO(model_path, task=task_type)
     source_path = Path(source)
     width, height, fps, fourcc, total_in_file = _build_video_writer(source_path)
 
-    effective_total = min(total_in_file, max_frames) if max_frames > 0 else total_in_file
-    if max_frames > 0 and total_in_file > max_frames:
+    effective_total = (
+        min(total_in_file, max_frames) if max_frames > 0 else total_in_file
+    )
+    if 0 < max_frames < total_in_file:
         logger.info(
             "[%s] Video %dx%d@%.0ffps  %d total (capped to %d)",
-            mode_name, width, height, fps, total_in_file, max_frames,
+            mode_name,
+            width,
+            height,
+            fps,
+            total_in_file,
+            max_frames,
         )
     else:
         logger.info(
             "[%s] Video %dx%d@%.0ffps  %d total",
-            mode_name, width, height, fps, total_in_file,
+            mode_name,
+            width,
+            height,
+            fps,
+            total_in_file,
         )
 
     writer = cv2.VideoWriter(str(output_video_path), fourcc, fps, (width, height))
@@ -73,11 +107,15 @@ def _benchmark_video_mode(mode_name: str, model_path: str, source: str, output_v
                 det_count += len(c)
             if n % log_every == 0 or n == 1:
                 el = time.perf_counter() - t0
-                logger.info("[%s] frame %d/%d (%.0f%%) – %.1f fps", mode_name, n,
-                            effective_total,
-                            (n / effective_total * 100) if effective_total > 0 else 0,
-                            n / el if el > 0 else 0)
-            if max_frames > 0 and n >= max_frames:
+                logger.info(
+                    "[%s] frame %d/%d (%.0f%%) – %.1f fps",
+                    mode_name,
+                    n,
+                    effective_total,
+                    (n / effective_total * 100) if effective_total > 0 else 0,
+                    n / el if el > 0 else 0,
+                )
+            if 0 < max_frames <= n:
                 break
     finally:
         cap.release()
@@ -88,13 +126,28 @@ def _benchmark_video_mode(mode_name: str, model_path: str, source: str, output_v
     avg_conf = total_conf / det_count if det_count > 0 else None
     model_sz = file_size_mb(Path(model_path))
 
-    logger.info("[%s] Done: %d frames %.2fs (%.1f fps) conf=%.4f", mode_name, n, elapsed, fps_out, avg_conf or 0)
+    logger.info(
+        "[%s] Done: %d frames %.2fs (%.1f fps) conf=%.4f",
+        mode_name,
+        n,
+        elapsed,
+        fps_out,
+        avg_conf or 0,
+    )
 
-    return {"mode": mode_name, "model_path": model_path, "model_size_mb": model_sz, "device": str(device),
-            "imgsz": imgsz, "frames": n, "elapsed_s": round(elapsed, 3), "fps": round(fps_out, 2),
-            "avg_ms_per_frame": round(elapsed * 1000 / n, 2) if n else None,
-            "avg_confidence": round(avg_conf, 4) if avg_conf is not None else None,
-            "output_video": str(output_video_path), }
+    return {
+        "mode": mode_name,
+        "model_path": model_path,
+        "model_size_mb": model_sz,
+        "device": str(device),
+        "imgsz": imgsz,
+        "frames": n,
+        "elapsed_s": round(elapsed, 3),
+        "fps": round(fps_out, 2),
+        "avg_ms_per_frame": round(elapsed * 1000 / n, 2) if n else None,
+        "avg_confidence": round(avg_conf, 4) if avg_conf is not None else None,
+        "output_video": str(output_video_path),
+    }
 
 
 def bench(
@@ -115,7 +168,11 @@ def bench(
         max_frames = min(src_total, math.ceil(src_fps * BENCH_MIN_DURATION_S))
         logger.info(
             "▶ Benchmarking: %s  (%.0f fps × %ds = %d frames, total %d)",
-            source_path.name, src_fps, BENCH_MIN_DURATION_S, max_frames, src_total,
+            source_path.name,
+            src_fps,
+            BENCH_MIN_DURATION_S,
+            max_frames,
+            src_total,
         )
 
         modes = [
@@ -124,10 +181,10 @@ def bench(
         ]
         # Only add TFLite modes whose files actually exist.
         for tag, mode_name, device in [
-            ("fp32",      "tflite_fp32_cpu",      None),
-            ("fp16",      "tflite_fp16_cpu",      None),
-            ("int8_dyn",  "tflite_int8_dyn_cpu",  None),
-            ("int8_full", "tflite_int8_full_cpu", None),
+            ("fp32", "tflite_fp32_cpu", "cpu"),
+            ("fp16", "tflite_fp16_cpu", "cpu"),
+            ("int8_dyn", "tflite_int8_dyn_cpu", "cpu"),
+            ("int8_full", "tflite_int8_full_cpu", "cpu"),
         ]:
             p = model_list.get(tag)
             if p and Path(p).exists():
@@ -137,11 +194,21 @@ def bench(
 
         vid_results: list[dict] = []
         for i, (name, mpath, sz, dev) in enumerate(modes, 1):
-            logger.info("--- [%s] Mode %d/%d: %s ---", source_path.name, i, len(modes), name)
-            vid_results.append(_benchmark_video_mode(
-                mode_name=name, model_path=mpath, source=source,
-                output_video_path=output_root / _video_output_name(source, name),
-                imgsz=sz, device=dev, max_frames=max_frames,
-            ))
+            logger.info(
+                "--- [%s] Mode %d/%d: %s ---", source_path.name, i, len(modes), name
+            )
+            model_stem = Path(mpath).stem
+            video_name = _video_output_name(source, model_stem, dev)
+            vid_results.append(
+                _benchmark_video_mode(
+                    mode_name=name,
+                    model_path=mpath,
+                    source=source,
+                    output_video_path=output_root / video_name,
+                    imgsz=sz,
+                    device=dev,
+                    max_frames=max_frames,
+                )
+            )
         all_video_results[source_path.name] = vid_results
     return all_video_results
