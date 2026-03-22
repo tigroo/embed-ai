@@ -24,13 +24,10 @@ import sys
 import tempfile
 
 
-output_dir = os.path.join(os.path.dirname(__file__), "output")
-os.makedirs(output_dir, exist_ok=True)
-logfile = os.path.join(output_dir, "pwa_server.log")
 logging.basicConfig(
-    filename=logfile,
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s"
+    format="%(asctime)s %(levelname)s %(message)s",
+    stream=sys.stdout
 )
 logger = logging.getLogger("pwa_server")
 # Ajout d'un handler console pour stdout

@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 
 import torch
+from onnxruntime import quantization
 from ultralytics import YOLO
 
 from config import logger, file_size_mb
@@ -67,6 +68,7 @@ def _flatten_saved_model(saved_model_dir: Path, output_dir: Path) -> None:
     for tflite in saved_model_dir.glob("*.tflite"):
         _move_artifact(tflite, output_dir)
 
+
 def export(model: str, output_dir: Path) -> Path:
     """Guarantee .pt weights exist inside *output_dir*, downloading if needed.
 
@@ -100,11 +102,7 @@ def export(model: str, output_dir: Path) -> Path:
     return target
 
 
-def export_tflite(
-    model: str,
-    output_root: Path,
-    calibration_yaml: str,
-) -> dict[str, str]:
+def export_tflite(model: str, output_root: Path, calibration_yaml: str, ) -> dict[str, str]:
     """Run all needed Ultralytics exports and return a dict of artifact paths.
 
     Ultralytics generates files inside a ``<stem>_saved_model/`` directory.
@@ -131,25 +129,15 @@ def export_tflite(
     pt_path = output_root / f"{model}.pt"
     saved_model_dir = output_root / f"{model}_saved_model"
 
-    model_list = {
-        "pt":        str(pt_path),
-        "fp32":      str(output_root / f"{model}_float32.tflite"),
-        "fp16":      str(output_root / f"{model}_float16.tflite"),
-        "int8_dyn":  str(output_root / f"{model}_int8.tflite"),
-        "int8_full": str(output_root / f"{model}_full_integer_quant.tflite"),
-    }
+    model_list = {"pt": str(pt_path), "fp32": str(output_root / f"{model}_float32.tflite"),
+        "fp16": str(output_root / f"{model}_float16.tflite"), "int8_dyn": str(output_root / f"{model}_int8.tflite"),
+        "int8_full": str(output_root / f"{model}_full_integer_quant.tflite"), }
 
-    need_float = (
-        not Path(model_list["fp32"]).exists()
-        or not Path(model_list["fp16"]).exists()
-    )
+    need_float = (not Path(model_list["fp32"]).exists() or not Path(model_list["fp16"]).exists())
     # A single int8=True call produces int8_dyn + int8_full via onnx2tf.
     # (also generates _integer_quant.tflite but we ignore it — same
     # breakage as int8_full, just with float I/O.)
-    need_int8 = (
-        not Path(model_list["int8_dyn"]).exists()
-        or not Path(model_list["int8_full"]).exists()
-    )
+    need_int8 = (not Path(model_list["int8_dyn"]).exists() or not Path(model_list["int8_full"]).exists())
 
     if need_float or need_int8:
         if torch.cuda.is_available():
@@ -175,29 +163,20 @@ def export_tflite(
                 #   _full_integer_quant.tflite  = full integer  (everything int8)
                 _INT8_CAL_DATA = "coco128.yaml"
                 logger.info("Exporting TFLite int8 (dynamic + integer + full) ...")
-                logger.info(
-                    "  Calibration: %s (auto-downloaded by Ultralytics)",
-                    _INT8_CAL_DATA,
-                )
+                logger.info("  Calibration: %s (auto-downloaded by Ultralytics)", _INT8_CAL_DATA, )
                 try:
                     with HeartBeat("PT -> ONNX -> SavedModel -> TFLite (int8)"):
                         pt_model.export(format="tflite", int8=True, data=_INT8_CAL_DATA)
                     _flatten_saved_model(saved_model_dir, output_root)
                 except Exception as e:
-                    logger.warning(
-                        "INT8 TFLite export failed: %s -- "
-                        "skipping INT8 variants (FP32/FP16 still available). "
-                        "This is a known issue with segmentation models in "
-                        "Ultralytics 8.4.x (calibration data lacks seg masks).",
-                        e,
-                    )
+                    logger.warning("INT8 TFLite export failed: %s -- "
+                                   "skipping INT8 variants (FP32/FP16 still available). "
+                                   "This is a known issue with segmentation models in "
+                                   "Ultralytics 8.4.x (calibration data lacks seg masks).", e, )
         finally:
             _restore_tf_gpus(tf_gpu_state)
-            logger.info(
-                "CUDA_VISIBLE_DEVICES after restore: %s  torch.cuda.device_count=%d",
-                os.environ.get("CUDA_VISIBLE_DEVICES", "<unset>"),
-                torch.cuda.device_count(),
-            )
+            logger.info("CUDA_VISIBLE_DEVICES after restore: %s  torch.cuda.device_count=%d",
+                os.environ.get("CUDA_VISIBLE_DEVICES", "<unset>"), torch.cuda.device_count(), )
     else:
         logger.info("All TFLite variants already present -- skipping export")
 
@@ -221,10 +200,7 @@ def export_tflite(
     # failed for segmentation models).  Downstream code (benchmark,
     # evaluation) already checks for file existence, but a clean dict
     # makes the summary more accurate.
-    model_list = {
-        tag: p for tag, p in model_list.items()
-        if Path(p).exists()
-    }
+    model_list = {tag: p for tag, p in model_list.items() if Path(p).exists()}
 
     return model_list
 
@@ -233,10 +209,7 @@ def _get_onnx_opset(onnx_path: Path) -> int:
     """Return the ai.onnx opset version of an ONNX model."""
     import onnx as _onnx
     m = _onnx.load(str(onnx_path))
-    return max(
-        (o.version for o in m.opset_import if o.domain in ("", "ai.onnx")),
-        default=0,
-    )
+    return max((o.version for o in m.opset_import if o.domain in ("", "ai.onnx")), default=0, )
 
 
 def _get_onnx_ops(onnx_path: Path) -> set[str]:
@@ -257,7 +230,6 @@ def export_onnx_for_pwa(output_root: Path, model_fp32: str) -> tuple[Path, Path]
     - int8.onnx from model_fp32.pt (dynamic quantisation, opset 17 or 13, for WASM)
     Only segmentation is supported. No detection export.
     """
-    from onnxruntime.quantization import QuantType, quantize_dynamic
 
     pt_path = output_root / f"{model_fp32}.pt"
     pwa_dir = Path("docs") / "pwa" / "models"
@@ -268,40 +240,11 @@ def export_onnx_for_pwa(output_root: Path, model_fp32: str) -> tuple[Path, Path]
     _WEB_ONNX_OPSET = 17
     _WEBGL_BLOCKLIST = {"GatherElements", "Mod", "TopK", "Split"}
 
-    # Step 1: Export FP32 ONNX (segmentation)
-    need_fp32 = True
+    # Step 1: Export FP32 ONNX
     if pwa_fp32.exists():
-        opset = _get_onnx_opset(pwa_fp32)
-        ops = _get_onnx_ops(pwa_fp32)
-        bad = _WEBGL_BLOCKLIST & ops
-        if opset <= _WEB_ONNX_OPSET and not bad:
-            need_fp32 = False
-            logger.info(
-                "PWA FP32 already WebGL/WebGPU/WASM compatible (opset %d): %s (%.1f MB)",
-                opset, pwa_fp32, file_size_mb(pwa_fp32),
-            )
-        else:
-            reason = f"opset {opset}" if opset > _WEB_ONNX_OPSET else f"bad ops {bad}"
-            logger.info(
-                "PWA ONNX not WebGL/WebGPU/WASM compatible (%s) -- re-exporting", reason,
-            )
-            pwa_fp32.unlink()
-
-    if need_fp32:
-        if not pt_path.exists():
-            # Try to download weights automatically
-            try:
-                from export import export as ensure_pt
-            except ImportError:
-                from . import export as ensure_pt
-            logger.info(f"PT weights not found at {pt_path}, attempting download...")
-            ensure_pt(model_fp32, output_root)
-        if not pt_path.exists():
-            raise FileNotFoundError(f"PT weights not found at {pt_path}")
-        logger.info(
-            "Exporting ONNX (opset %d, end2end=False) for PWA FP32 (segmentation) ...",
-            _WEB_ONNX_OPSET,
-        )
+        logger.info("FP32 ONNX for PWA model already present: %s (%.1f MB)", pwa_fp32, file_size_mb(pwa_fp32), )
+    else:
+        logger.info("Exporting FP32 ONNX for PWA ...")
         yolo_model = YOLO(str(pt_path))
         # See: https://docs.ultralytics.com/modes/export/#export-arguments
         # Explicitly disable built-in NMS for ONNX export (end2end=False)
@@ -316,31 +259,16 @@ def export_onnx_for_pwa(output_root: Path, model_fp32: str) -> tuple[Path, Path]
             logger.warning("PWA FP32 still has WebGL-blocklisted ops: %s", bad)
         else:
             logger.info("PWA FP32 is WebGL/WebGPU/WASM compatible (no blocklisted ops)")
-        logger.info(
-            "  PWA FP32 : %.1f MB  opset %d  (%s)",
-            file_size_mb(pwa_fp32), _WEB_ONNX_OPSET, pwa_fp32,
-        )
+        logger.info("  PWA FP32 : %.1f MB  opset %d  (%s)", file_size_mb(pwa_fp32), _WEB_ONNX_OPSET, pwa_fp32, )
 
-    # Step 2: Export quantized ONNX (dynamic quantization, segmentation)
-    # On ne tente plus la quantification int8 statique (Split non supporté)
+    # Step 2: Export quantized ONNX
     if pwa_quant.exists():
-        logger.info(
-            "PWA quantized model already present: %s (%.1f MB)",
-            pwa_quant, file_size_mb(pwa_quant),
-        )
+        logger.info("Quantized ONNX for PWA model already present: %s (%.1f MB)", pwa_quant, file_size_mb(pwa_quant), )
     else:
-        logger.info("Exporting quantized ONNX (dynamic quantization) for PWA ...")
-        try:
-            quantize_dynamic(
-                model_input=str(pwa_fp32),
-                model_output=str(pwa_quant),
-                weight_type=QuantType.QUInt8,
-            )
-            logger.info("  PWA quant : %.1f MB  (%s)", file_size_mb(pwa_quant), pwa_quant)
-        except Exception as e:
-            logger.warning(f"Quantization failed for PWA quantized model: {e}")
-            if pwa_quant.exists():
-                pwa_quant.unlink(missing_ok=True)
+        logger.info("Exporting quantized ONNX for PWA ...")
+        quantization.quantize_dynamic(model_input=str(pwa_fp32), model_output=str(pwa_quant),
+            weight_type=quantization.QuantType.QUInt8, )
+        logger.info("  PWA quant : %.1f MB  (%s)", file_size_mb(pwa_quant), pwa_quant)
 
     return pwa_fp32, pwa_quant
 
@@ -375,4 +303,3 @@ def _find_head_nodes(onnx_path: Path) -> list[str]:
     if head:
         logger.info("Detection head: %d nodes under %s kept in FP32", len(head), prefix)
     return head
-

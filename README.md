@@ -1,7 +1,11 @@
 # embed-ai
 
-> A hands-on demo: take a YOLO v26 segmentation model, shrink it from
-> 10 MB to 3 MB, measure what breaks, and run it live on a phone.
+A hands-on demo: 
+
+* take a YOLO v26 segmentation model
+* shrink it
+* measure what breaks
+* run it live on a phone
 
 ---
 
@@ -10,28 +14,28 @@
 ```
   ┌──────────────────────────────────────────────────────────────────┐
   │                    Cloud / Desktop                               │
-  │               GPU · 24 GB VRAM · unlimited power                 │
-  │                        FP32 model                                │
+  │               GPU · 24 GB RAM · unlimited power                  │
   └──────────────────────────┬───────────────────────────────────────┘
-                             │  Too big, too slow, too hungry
+                             │  big, slow, polluter
                              ▼
   ┌──────────────────────────────────────────────────────────────────┐
-  │                  Edge / Mobile / Browser                         │
-  │             limited RAM · battery · no GPU (often)               │
-  │                 Needs: small · fast · "good enough"              │
-  └──────────────────────────────────────────────────────────────────┘
+  │                  Embedded / Mobile / Browser                     │
+  │             limited RAM · battery · no GPU                       │
+  └──────────────────────────┬───────────────────────────────────────┘
+                             │  small, fast, frugal
+                             ▼  
 ```
 
-**Four reasons to shrink:**
+### Mesure the effort
 
 | Goal                | Metric              | Edge constraint       |
 |---------------------|---------------------|-----------------------|
-| Smaller download    | File size (MB)      | 5G, app store limits  |
+| Smaller download    | File size (MB)      | network               |
 | Lower latency       | Inference time (ms) | Real-time at 30 fps   |
 | Less memory         | Peak RAM (MB)       | 2–4 GB shared with OS |
-| Less energy         | Joules per frame    | Battery life matters  |
+| Less energy         | Joules per frame?   | Battery life          |
 
-**The tradeoff triangle — pick two:**
+The tradeoff triangle — pick two:
 
 ```
               Accuracy
@@ -39,26 +43,26 @@
                 ╱ ╲
                ╱   ╲        Quantization =
               ╱     ╲       sacrifice accuracy
-             ╱       ╲      for size + speed.
+             ╱       ╲  
             ▼─────────▼
          Size ◄──────► Latency
 ```
 
-**Two recommended builds for any edge project:**
+Two recommended builds for any embedding project:
 
-| Build     | Format     | Use case                         |
-|-----------|------------|----------------------------------|
-| Quality   | FP16/FP32  | Best accuracy, larger, slower    |
-| Fast      | INT8       | Smallest, fastest, "good enough" |
+| Build     | Format     | 
+|-----------|------------|
+| Quality   | FP16/FP32  | 
+| Fast      | INT8       |
 
 ---
 
-## Pipeline
+### Embedded Pipeline
 
 ```
   ┌───────────────────────────────────────────────────────────────────┐
   │ Step 1  export                                                    │
-  │ Download / locate yolo26n.pt.                                     │
+  │ Download the model                                                │
   └────────────────────────────────┬──────────────────────────────────┘
                                    │
                                    ▼
@@ -93,15 +97,40 @@
   │   sources, artifacts (sizes), evaluation (mAP), benchmarks (FPS), │
   │   calibration report, GPU info.                                   │
   └───────────────────────────────────────────────────────────────────┘
-
-
-
-
 ```
 
 ---
 
-## Conversion
+## Yolo26 example
+
+###
+
+[Yolo tasks and modes](https://docs.ultralytics.com/models/yolo26/#supported-tasks-and-modes)
+
+## Going Bigger ?
+
+
+```
+  Model           Params    PT size   ONNX FP32   Best for
+  ──────────────  ────────  ────────  ──────────  ──────────────────────────────────────────────
+  yolo26n         2.4 M      5 MB     10 MB       ✅ tiny + fast demo
+  yolo26s         9.2 M     19 MB     37 MB       better int8 accuracy
+  yolo26m        20.0 M     40 MB     79 MB       production accuracy
+  yolo26l        46.7 M     97 MB    187 MB       large objects, high accuracy
+  yolo26x        99.0 M    205 MB    395 MB       highest accuracy, very heavy
+```
+
+**Segmentation models:**
+
+```
+  Model           Params    PT size   ONNX FP32   Best for
+  ─────────────── ────────  ────────  ──────────  ──────────────────────────────────────────────
+  yolo26n-seg     2.7 M      6 MB     11 MB       pixel masks (visual!)
+  yolo26s-seg     9.7 M     20 MB     39 MB       best int8 accuracy
+  yolo26m-seg    21.2 M     44 MB     85 MB       production accuracy
+  yolo26l-seg    47.0 M     97 MB    187 MB       large objects, high accuracy
+  yolo26x-seg    99.1 M    205 MB    395 MB       highest accuracy, very heavy
+```
 
 ```
   yolo26n.pt                          PyTorch weights
@@ -241,17 +270,6 @@
 
 ---
 
-## Slide 10 — Going Bigger or Segmentation?
-
-```
-  Model           Params    PT size   ONNX FP32   Best for
-  ──────────────  ────────  ────────  ──────────  ──────────────────────
-  yolo26n         2.4 M      5 MB     10 MB       ✅ tiny + fast demo
-  yolo26s         9.2 M     19 MB     37 MB       better int8 accuracy
-  yolo26m        20.0 M     40 MB     79 MB       production accuracy
-  yolo26n-seg     2.7 M      6 MB     11 MB       pixel masks (visual!)
-```
-
 **Detection (boxes) vs Segmentation (pixel masks):**
 
 ```
@@ -295,35 +313,12 @@
   <a href="https://tigroo.github.io/embed-ai/pwa/">https://tigroo.github.io/embed-ai/pwa/</a>
 </p>
 
-```
-  ┌─────────────────────────────────────────────┐
-  │          YOLO v26 — Live Detect             │
-  │                                             │
-  │  ┌───────────────────────────────────────┐  │
-  │  │  ┌─────┐                              │  │
-  │  │  │ HUD │ FPS: 12.3                    │  │
-  │  │  │     │ Inference: 82 ms             │  │
-  │  │  │     │ Objects: 3                   │  │
-  │  │  │     │ Model: INT8                  │  │
-  │  │  │     │ Backend: webgl               │  │
-  │  │  └─────┘                              │  │
-  │  │         ┌──────────┐                  │  │
-  │  │         │ person   │                  │  │
-  │  │         │  87%     │                  │  │
-  │  │         └──────────┘  ┌─────┐         │  │
-  │  │                       │ car │         │  │
-  │  │                       │ 72% │         │  │
-  │  │                       └─────┘         │  │
-  │  └───────────────────────────────────────┘  │
-  │                                             │
-  │  [Model ▾ INT8 — ~3 MB]  [Conf ━━●━━ 0.35] │
-  └─────────────────────────────────────────────┘
-```
+[Yolo26 formats](https://docs.ultralytics.com/modes/export/#export-formats)
 
-| Model | Size | Quantization | Backend |
-|-------|------|-------------|---------|
-| **FP32** | ~10 MB | Full precision | WebGPU / WebGL / WASM |
-| **INT8** | ~3.5 MB | Backbone INT8, head FP32 | WebGPU / WebGL / WASM |
+| Model    | Size    | Quantization             | Backend                |
+|----------|---------|--------------------------|------------------------|
+| **FP32** | ~10 MB  | Full precision           | WebGPU / WebGL / WASM  |
+| **INT8** | ~3.5 MB | Backbone INT8, head FP32 | WebGPU / WebGL / WASM  |
 
 Both models are **pipeline artifacts** generated by `main.py` (step 4):
 - FP32 = ONNX exported at opset 17, `end2end=False`

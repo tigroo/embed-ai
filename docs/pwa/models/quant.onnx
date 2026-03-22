@@ -9840,7 +9840,7 @@ $/model.23/proto/cv2/act/Mul_output_0
 onnx.inferonnxruntime.quantru
 descriptionfUltralytics YOLO26n-seg model trained on /home/lq/codes/ultralytics/ultralytics/cfg/datasets/coco.yamlr
 authorUltralyticsr"
-date2026-03-22T15:40:05.593976r
+date2026-03-22T16:18:38.822184r
 version8.4.22r=
 license2AGPL-3.0 License (https://ultralytics.com/license)r$
 docshttps://docs.ultralytics.comr
