@@ -180,17 +180,10 @@ Two recommended builds for any embedding project:
 | Edge TPU / NNAPI delegates        | Desktop demo, not mobile native |
 | Split suppressions (WebGL)        | WebGL-compatible ONNX export    |
 
-The real reduction comes from **quantisation within TFLite**:
-FP32 (10 MB) → FP16 (5 MB) → INT8 (3 MB).
+> **Note:** **Dynamic-range INT8** stores weights as int8 but dequantizes to FP32 at runtime.
 
-**int8_dyn** stores weights as int8 but dequantizes to FP32 at runtime.
-
-**int8_full** forces everything to int8 — the detection head confidence scores are crushed.
+> **Note:** **Full-integer INT8** forces everything to int8 : the detection head confidence scores are bad.
 **Kept as a demo of what goes wrong** when you blindly quantise without tree analysis.
-
-**QAT** (Quantization-Aware Training) retrains the model with
-quantisation in the loop so it learns to produce robust confidences
-despite int8 rounding. Out of scope here.
 
 ### Tree analysis : an example
 
@@ -239,12 +232,10 @@ It depends on the platform:
                  │     opset 17, not end2end                     │
                  ├──── Onnx runtime ─────────────────────────────┤
                            │     quant.onnx  ~3 MB               │
-                           │     uint8 type                      │
+                           │     backbone uint8 type             │
+                           │     detection head float32 type     │
                            └─────────────────────────────────────┘
 ```
-
-
-Quantise backbone to INT8, keep detection head FP32.
 
 <p align="center">
   <img src="docs/pwa/qr.svg" alt="QR code" width="200" /><br/>
@@ -254,6 +245,12 @@ Quantise backbone to INT8, keep detection head FP32.
 [Yolo26 formats](https://docs.ultralytics.com/modes/export/#export-formats)
 
 
+The end2end YOLO export includes TopK / GatherElements / Mod
+in the detection head ... NOT supported by WebGL :(.
+So we export without end2end.
+
+NMS is done in JavaScript: ~1 ms overhead.
+
 ### Runtime
 
 Backend negotiation (fastest → safest):
@@ -261,13 +258,10 @@ Backend negotiation (fastest → safest):
 2. WebGL    (mature, broad support)
 3. WASM     (universal fallback)
 
-The end2end YOLO export includes TopK / GatherElements / Mod
-in the detection head — NOT supported by WebGL.
-So we export with end2end=False.
 
-NMS is done in JavaScript (detector.js): ~1 ms overhead.
-
-Result: WebGL works → 2-5× faster than WASM on most devices.
+Various results:
+* WebGPU to manually activate on browser Firefox: about:config -> dom.webgpu.enabled : True
+* WebGL works → 2-5× faster than WASM on most devices.
 
 ---
 
