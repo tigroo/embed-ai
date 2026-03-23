@@ -44,6 +44,8 @@ A hands-on demo:
   ☑ Result check             (are predictions still correct?)
 ```
 
+[Mean Average Precision (mAP)](https://www.ultralytics.com/glossary/mean-average-precision-map)
+
 The tradeoff triangle — pick two:
 
 ```

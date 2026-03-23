@@ -42,12 +42,6 @@ const MODEL_META = {
   quant: { path: "models/quant.onnx", size: "~4 MB",  label: "Quantized" },
 };
 
-/**
- * Ordered backends — fastest first, automatic fallback:
- *   1. WebGPU  (newest, best perf when supported)
- *   2. WebGL   (mature, broad support)
- *   3. WASM    (universal fallback)
- */
 function candidateProviders() {
   const list = [];
   if (typeof navigator !== "undefined" && navigator.gpu) list.push("webgpu");
@@ -97,7 +91,6 @@ export async function loadModel(variant) {
   console.log(`[detector] Candidates for variant='${variant}': [${candidates}]`);
   logToServer(`[detector] Candidates for variant='${variant}': [${candidates}]`);
 
-  // ...existing code...
   if (variant === "quant" && (candidates.length !== 1 || candidates[0] !== "wasm")) {
     const msg = `[detector] ERROR: INT8 candidates not strictly WASM: [${candidates}]`;
     console.error(msg);
@@ -216,7 +209,6 @@ export async function detect(video, confThreshold = 0.35) {
 
   const dets = decodeAndNMS(detRaw, numAnchors, numRows, confThreshold, sx, sy, hasMasks);
 
-  // ...existing code...
   let protos = null;
   if (hasMasks && protoTensor) {
     protos = new Float32Array(protoTensor.data);

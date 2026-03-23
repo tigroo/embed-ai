@@ -1,20 +1,5 @@
 /**
  * Main application — camera, render loop, HUD, UI controls.
- *
- * iOS resilience
- * ──────────────
- * All iOS browsers use WebKit.  WebKit aggressively kills ("jetsams")
- * web-content processes that hold resources while the page is hidden
- * (notification shade, control centre, tab switch, lock screen…).
- * When the process is killed the page reloads → camera re-prompted.
- *
- * Our defence:
- *   • Listen for `visibilitychange` — STOP inference AND release the
- *     camera stream the instant the page becomes hidden.
- *   • On `visibilitychange` visible → restart camera + loop.
- *   • On `pageshow` with `persisted` (bfcache restore) → same.
- *   • Global error/rejection guards so nothing crashes the page.
- *   • No Service Worker registration on iOS (removes a reload vector).
  */
 import { loadModel, detect, computeMask, isIOS, PROTO_H, PROTO_W, MODEL_INPUT_SIZE } from "./detector.js";
 import { COCO_LABELS, classColor } from "./coco-labels.js";
@@ -71,7 +56,7 @@ let resumeTimer = null;
 async function startCamera() {
   statusEl.textContent = "Starting camera\u2026";
   try {
-    stopCamera();                 // release any previous stream first
+    stopCamera(); // release any previous stream first
 
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -109,7 +94,6 @@ function cameraAlive() {
 }
 
 // ── Render loop ─────────────────────────────────────────────────────────────
-
 function scheduleNext() {
   if (!running) return;
   setTimeout(() => requestAnimationFrame(loop), MIN_FRAME_GAP_MS);
@@ -304,9 +288,6 @@ async function resumeAll() {
   }
 }
 
-// The KEY handler: when iOS hides the page (notification, control centre,
-// tab switch, lock screen), we immediately release the camera.  When the
-// page becomes visible again, we re-acquire it.
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     pauseAll();
@@ -387,9 +368,6 @@ window.addEventListener("beforeinstallprompt", (e) => {
 });
 
 // ── Service Worker ──────────────────────────────────────────────────────────
-// On iOS: the old SW (with skipWaiting + clients.claim) may still be active
-// from previous visits.  It can trigger page reloads at any time.
-// We must UNREGISTER it and nuke its caches to stop the reload loop.
 if ("serviceWorker" in navigator) {
   if (isIOS) {
     navigator.serviceWorker.getRegistrations().then((regs) => {
