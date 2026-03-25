@@ -247,12 +247,14 @@ It depends on the platform:
 
 [Yolo26 formats](https://docs.ultralytics.com/modes/export/#export-formats)
 
-
-The end2end YOLO export includes TopK / GatherElements / Mod
+> **Note:** The **end2end** YOLO export includes TopK / GatherElements / Mod
 in the detection head ... NOT supported by WebGL :(.
 So we export without end2end.
 
-NMS is done in JavaScript: ~1 ms overhead.
+> **Note:**  **NMS** is done in JavaScript: ~1 ms overhead.
+
+> **Note:** Due to Split operators in the segmentation graph,
+full int8 quantisation is not possible for ONNX.
 
 ### Runtime
 
@@ -293,11 +295,3 @@ Videos are auto-discovered from `resources/*.mp4`.
 ```bash
 python serve_local.py
 ```
-
-## PWA quantized ONNX model
-
-Due to Split operators in the segmentation graph,
-static int8 quantisation is not possible for ONNX.
-
-Only dynamic quantisation is used for the PWA quantised model,
-which reduces file size but not as much as TFLite int8.
