@@ -185,6 +185,9 @@ Two recommended builds for any embedding project:
 > **Note:** **Full-integer INT8** forces everything to int8 : the detection head confidence scores are bad.
 **Kept as a demo of what goes wrong** when you blindly quantise without tree analysis.
 
+> **Note:** **Full-integer INT8** is not supported
+for segmentation models due to Split operators in the graph (available for detect models).
+
 ### Tree analysis : an example
 
 ```
@@ -260,8 +263,9 @@ Backend negotiation (fastest → safest):
 
 
 Various results:
-* WebGPU to manually activate on browser Firefox: about:config -> dom.webgpu.enabled : True
-* WebGL works → 2-5× faster than WASM on most devices.
+* WebGPU to manually activate on browser Firefox: about:config → dom.webgpu.enabled : True
+* WebGL works → 2-5× faster than WASM on most devices
+* WASM on CPU with XNNPACK
 
 ---
 
@@ -283,12 +287,6 @@ pipenv run python main.py
 | `--calibration` | None           | Path to calibration YAML (optional)    |
 
 Videos are auto-discovered from `resources/*.mp4`.
-
-> **Note:** INT8 TFLite export is not available for segmentation models
-> due to a bug in Ultralytics 8.4.x (calibration data lacks seg masks).
-
-> **Note:** Full integer quantisation is not supported
-> for segmentation models due to Split operators in the graph.
 
 ### Test locally (before pushing)
 
